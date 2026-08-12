@@ -131,7 +131,16 @@ The checked-in `config.toml` uses a local SQLite file:
 
 ```toml
 [database]
-url = "sqlite:///./exercise_api.db"
+# Optional direct SQLAlchemy URL override. Leave blank to build the URL from
+# the structured SQLite or PostgreSQL settings below.
+# url = "sqlite:///./exercise_api.db"
+backend = "sqlite"
+sqlite_path = "./exercise_api.db"
+postgres_host = "localhost"
+postgres_port = 5432
+postgres_database = "exercises"
+postgres_user = "exercise_user"
+postgres_password = "password"
 
 [llm]
 base_url = "http://localhost:11434/v1"
@@ -148,19 +157,29 @@ result_limit = 10
 history_message_limit = 20
 ```
 
-To use PostgreSQL, change only the database URL:
+To use PostgreSQL, change the database backend and credentials:
 
 ```toml
 [database]
-url = "postgresql+psycopg://exercise_user:password@localhost:5432/exercises"
+backend = "postgresql"
+postgres_host = "localhost"
+postgres_port = 5432
+postgres_database = "exercises"
+postgres_user = "exercise_user"
+postgres_password = "replace-with-a-secret"
 ```
 
-The service also accepts `postgresql://` and Testcontainers-style `postgresql+psycopg2://` URLs and normalizes them to the async psycopg driver. The database and role must already exist and be allowed to create and alter application tables. Schema creation and the legacy session-column upgrade are serialized across processes with a SQLite exclusive transaction or a PostgreSQL transaction-scoped advisory lock; every instance may run the same idempotent initializer during startup.
+If `database.url` is set, it takes precedence over the structured fields. The service also accepts `postgresql://` and Testcontainers-style `postgresql+psycopg2://` URLs and normalizes them to the async psycopg driver. The database and role must already exist and be allowed to create and alter application tables. Schema creation and the legacy session-column upgrade are serialized across processes with a SQLite exclusive transaction or a PostgreSQL transaction-scoped advisory lock; every instance may run the same idempotent initializer during startup.
 
 Every setting can be overridden without editing the TOML file. Environment variable names use `EXERCISE_API__<SECTION>__<KEY>`:
 
 ```powershell
-$env:EXERCISE_API__DATABASE__URL = "postgresql+psycopg://exercise_user:password@localhost:5432/exercises"
+$env:EXERCISE_API__DATABASE__BACKEND = "postgresql"
+$env:EXERCISE_API__DATABASE__POSTGRES_HOST = "localhost"
+$env:EXERCISE_API__DATABASE__POSTGRES_PORT = "5432"
+$env:EXERCISE_API__DATABASE__POSTGRES_DATABASE = "exercises"
+$env:EXERCISE_API__DATABASE__POSTGRES_USER = "exercise_user"
+$env:EXERCISE_API__DATABASE__POSTGRES_PASSWORD = "replace-with-a-secret"
 $env:EXERCISE_API__LLM__BASE_URL = "https://provider.example/v1"
 $env:EXERCISE_API__LLM__API_KEY = "replace-with-a-secret"
 $env:EXERCISE_API__LLM__MODEL = "provider-model-name"

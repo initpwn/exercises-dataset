@@ -58,7 +58,7 @@ def create_app(
             try:
                 resolved_settings = settings or load_settings(app.state.settings_path)
                 if database is None:
-                    database = Database(resolved_settings.database.url)
+                    database = Database(resolved_settings.database.resolved_url)
                 app.state.settings = resolved_settings
                 app.state.database = database
                 if app.state.llm_gateway is None:

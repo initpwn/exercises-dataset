@@ -4,13 +4,36 @@ import os
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import quote
 
 from pydantic import BaseModel, Field
 
 
 class DatabaseSettings(BaseModel):
-    url: str = "sqlite:///./exercise_api.db"
+    url: str | None = None
+    backend: Literal["sqlite", "postgresql"] = "sqlite"
+    sqlite_path: str = "./exercise_api.db"
+    postgres_host: str = "localhost"
+    postgres_port: int = Field(default=5432, gt=0, le=65535)
+    postgres_database: str = "exercises"
+    postgres_user: str = "exercise_user"
+    postgres_password: str = "password"
+
+    @property
+    def resolved_url(self) -> str:
+        """Return explicit URL or assemble one from structured database settings."""
+        if self.url:
+            return self.url
+        if self.backend == "sqlite":
+            return f"sqlite:///{self.sqlite_path}"
+        user = quote(self.postgres_user, safe="")
+        password = quote(self.postgres_password, safe="")
+        database = quote(self.postgres_database, safe="")
+        return (
+            f"postgresql+psycopg://{user}:{password}@"
+            f"{self.postgres_host}:{self.postgres_port}/{database}"
+        )
 
 
 class LLMSettings(BaseModel):

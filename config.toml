@@ -1,5 +1,14 @@
 [database]
-url = "sqlite:///./exercise_api.db"
+# Optional direct SQLAlchemy URL override. Leave blank to build the URL from
+# the structured SQLite or PostgreSQL settings below.
+# url = "sqlite:///./exercise_api.db"
+backend = "sqlite"
+sqlite_path = "./exercise_api.db"
+postgres_host = "localhost"
+postgres_port = 5432
+postgres_database = "exercises"
+postgres_user = "exercise_user"
+postgres_password = "password"
 
 [llm]
 base_url = "http://localhost:11434/v1"
