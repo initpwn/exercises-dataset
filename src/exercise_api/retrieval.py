@@ -17,10 +17,8 @@ def _score(exercise: ExerciseOut, needles: list[str]) -> float:
         (
             5 * _best_match(needles, [exercise.name]),
             4 * _best_match(needles, [exercise.target]),
-            3
-            * _best_match(
-                needles, [exercise.muscle_group, *exercise.secondary_muscles]
-            ),
+            3 * _best_match(needles, [exercise.muscle_group]),
+            3 * _best_match(needles, exercise.secondary_muscles),
             2 * _best_match(needles, [exercise.equipment]),
             2 * _best_match(needles, [exercise.body_part]),
             1 * _best_match(needles, exercise.instructions),

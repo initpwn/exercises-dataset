@@ -45,6 +45,28 @@ async def retrieval(tmp_path: Path) -> AsyncIterator[RetrievalService]:
                     target="lats",
                     instructions=["Keep your biceps curled throughout the movement."],
                 ),
+                catalog_record(
+                    "0005",
+                    "balanced movement",
+                    category="test",
+                    body_part="arms",
+                    equipment="test rig",
+                    muscle_group="biceps",
+                    secondary_muscles=["triceps"],
+                    target="neutral",
+                    instructions=["Perform the movement."],
+                ),
+                catalog_record(
+                    "0006",
+                    "biceps triceps exercise",
+                    category="test",
+                    body_part="arms",
+                    equipment="test rig",
+                    muscle_group="back",
+                    secondary_muscles=["forearms"],
+                    target="neutral",
+                    instructions=["Perform the movement."],
+                ),
             ],
         ),
     )
@@ -77,6 +99,25 @@ async def test_name_and_target_outweigh_instruction_only_match(
         candidate_limit=3,
     )
     assert results[0].name == "dumbbell biceps curl"
+
+
+@pytest.mark.asyncio
+async def test_muscle_group_and_secondary_muscles_score_separately(
+    retrieval: RetrievalService,
+) -> None:
+    results = await retrieval.retrieve(
+        RetrievalPlan(
+            intent="exercise_search",
+            equipment="test rig",
+            search_terms=["biceps", "triceps"],
+        ),
+        "",
+        candidate_limit=2,
+    )
+    assert [item.name for item in results] == [
+        "balanced movement",
+        "biceps triceps exercise",
+    ]
 
 
 @pytest.mark.asyncio
