@@ -43,23 +43,16 @@ class UngroundedLLMResponseError(Exception):
     """Raised when the sole grounding correction still selects unknown IDs."""
 
 
-_MEDICAL_CONTEXT_TERMS = (
-    "pain",
-    "injury",
-    "injuries",
-    "injured",
-    "pregnant",
-    "pregnancy",
-    "rehab",
-    "rehabilitation",
-    "medical condition",
-    "health condition",
-    "heart condition",
-    "asthma",
-    "diabetes",
+_MEDICAL_CONTEXT_PATTERNS = (
+    r"\bpain(?:ful)?\b",
+    r"\binjur(?:y|ies|ed)\b",
+    r"\bpregnan(?:t|cy)\b",
+    r"\brehab(?:bing|bed|s|ilitation)?\b",
+    r"\b(?:medical|health|heart)\s+conditions?\b",
+    r"\b(?:asthma|diabetes)\b",
 )
 _MEDICAL_CONTEXT_PATTERN = re.compile(
-    r"\b(?:" + "|".join(re.escape(term) for term in _MEDICAL_CONTEXT_TERMS) + r")\b",
+    "|".join(_MEDICAL_CONTEXT_PATTERNS),
     flags=re.IGNORECASE,
 )
 _MEDICAL_WARNING = (

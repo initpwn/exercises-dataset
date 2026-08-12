@@ -412,6 +412,10 @@ async def test_injury_text_adds_professional_guidance_warning(
         "I have a heart condition; suggest a chest exercise.",
         "I have asthma; suggest a chest exercise.",
         "I have diabetes; suggest a chest exercise.",
+        "My shoulder is painful; suggest a chest exercise.",
+        "I have multiple medical conditions; suggest a chest exercise.",
+        "I am rehabbing an injury; suggest a chest exercise.",
+        "I am rehabbing after surgery; suggest a chest exercise.",
     ],
 )
 @pytest.mark.asyncio
@@ -436,9 +440,16 @@ async def test_named_medical_conditions_add_professional_guidance_warning(
     assert "professional guidance" in warnings
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Suggest a chest exercise.",
+        "I am painting a room; suggest a chest exercise.",
+    ],
+)
 @pytest.mark.asyncio
-async def test_normal_request_does_not_add_medical_warning(
-    chat_client: AsyncClient, fake_llm: FakeLLM
+async def test_non_medical_request_does_not_add_medical_warning(
+    chat_client: AsyncClient, fake_llm: FakeLLM, message: str
 ) -> None:
     fake_llm.queue(
         {"intent": "exercise_search", "body_part": "chest"},
@@ -450,9 +461,7 @@ async def test_normal_request_does_not_add_medical_warning(
         },
     )
 
-    response = await chat_client.post(
-        "/v1/chat", json={"message": "Suggest a chest exercise."}
-    )
+    response = await chat_client.post("/v1/chat", json={"message": message})
 
     assert response.status_code == 200
     assert response.json()["warnings"] == []
