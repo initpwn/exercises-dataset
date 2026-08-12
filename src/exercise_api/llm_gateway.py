@@ -8,7 +8,7 @@ from typing import TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from exercise_api.api_models import ChatMessage
+from exercise_api.api_models import ChatMessage, RetrievalPlan
 from exercise_api.config import LLMSettings
 from exercise_api.prompts import json_repair_message
 
@@ -154,6 +154,7 @@ class LLMGateway:
                 response.json(), self._settings.api_format, self._settings.model
             )[1]
             decoded = json.loads(_extract_json(content))
+            decoded = _normalize_structured_payload(decoded, output_type)
             return output_type.model_validate(decoded)
         except (
             json.JSONDecodeError,
@@ -186,6 +187,27 @@ def _extract_json(content: str) -> str:
             continue
         return content[index : index + end]
     return content
+
+
+def _normalize_structured_payload(payload: object, output_type: type[T]) -> object:
+    """Flatten the common semantic wrapper emitted by smaller planner models."""
+    if output_type is not RetrievalPlan or not isinstance(payload, dict):
+        return payload
+    if "intent" in payload or "classification" not in payload:
+        return payload
+    constraints = payload.get("constraints")
+    preferences = payload.get("workout_preferences")
+    normalized = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"classification", "constraints", "workout_preferences"}
+    }
+    normalized["intent"] = payload["classification"]
+    if isinstance(constraints, dict):
+        normalized.update(constraints)
+    if isinstance(preferences, dict):
+        normalized.update(preferences)
+    return normalized
 
 
 def _completion_fields(

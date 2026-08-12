@@ -146,6 +146,49 @@ async def test_lm_studio_ignores_reasoning_output_before_json_message() -> None:
 
 
 @pytest.mark.asyncio
+async def test_planner_wrapper_shape_is_normalized() -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "model_instance_id": "test-model",
+            "output": [
+                {
+                    "type": "message",
+                    "content": json.dumps(
+                        {
+                            "classification": "workout",
+                            "constraints": {
+                                "category": None,
+                                "body_part": "chest",
+                                "equipment": "barbell",
+                                "muscle_group": None,
+                                "target": None,
+                                "search_terms": ["chest", "barbell"],
+                            },
+                            "workout_preferences": {
+                                "experience_level": None,
+                                "fitness_goal": None,
+                                "duration_minutes": None,
+                                "training_volume": None,
+                                "restrictions": None,
+                            },
+                        }
+                    ),
+                }
+            ],
+        },
+    )
+    gateway = LLMGateway(lm_studio_settings(), transport=SequenceTransport([response]))
+
+    result = await gateway.generate_json(messages(), RetrievalPlan)
+
+    assert result.intent == "workout"
+    assert result.body_part == "chest"
+    assert result.equipment == "barbell"
+    assert result.search_terms == ["chest", "barbell"]
+
+
+@pytest.mark.asyncio
 async def test_completion_returns_only_provider_metadata_and_content() -> None:
     response = httpx.Response(
         200,
