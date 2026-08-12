@@ -11,7 +11,6 @@ from sqlalchemy import text
 
 from exercise_api.config import DatabaseSettings, Settings
 from exercise_api.database import Database
-from exercise_api.dependencies import get_session_repository
 from exercise_api.main import create_app
 from exercise_api.session_repository import SessionRepository
 
@@ -23,9 +22,7 @@ async def client(tmp_path: Path) -> AsyncIterator[AsyncClient]:
     app = create_app(
         Settings(database=DatabaseSettings(url="sqlite:///unused.db")),
         lifespan_enabled=False,
-    )
-    app.dependency_overrides[get_session_repository] = lambda: SessionRepository(
-        database.session_factory
+        initialized_database=database,
     )
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"

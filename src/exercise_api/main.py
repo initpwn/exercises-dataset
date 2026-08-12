@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from exercise_api.catalog import load_catalog, sync_catalog
-from exercise_api.config import Settings
+from exercise_api.config import Settings, load_settings
 from exercise_api.database import Database
 from exercise_api.dependencies import require_ready
 from exercise_api.llm_gateway import (
@@ -22,14 +22,30 @@ from exercise_api.routes.health import router as health_router
 from exercise_api.routes.sessions import router as session_router
 
 
-def create_app(settings: Settings, lifespan_enabled: bool = True) -> FastAPI:
-    """Create an exercise API application for the supplied settings."""
-    database = Database(settings.database.url)
+def create_app(
+    settings: Settings | None = None,
+    lifespan_enabled: bool = True,
+    *,
+    initialized_database: Database | None = None,
+    settings_path: Path = Path("config.toml"),
+    catalog_path: Path = Path("data/exercises.json"),
+    schema_path: Path = Path("data/exercises.schema.json"),
+) -> FastAPI:
+    """Create an app with deferred production startup or explicit test state."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        database = initialized_database
+        owns_database = database is None
+        app.state.readiness.update(database="pending", catalog="pending")
         try:
             try:
+                resolved_settings = settings or load_settings(app.state.settings_path)
+                if database is None:
+                    database = Database(resolved_settings.database.url)
+                app.state.settings = resolved_settings
+                app.state.database = database
+                app.state.llm_gateway = LLMGateway(resolved_settings.llm)
                 await database.create_schema()
             except Exception:  # noqa: BLE001 - health must survive startup failures.
                 app.state.readiness.update(database="failed", catalog="failed")
@@ -46,15 +62,22 @@ def create_app(settings: Settings, lifespan_enabled: bool = True) -> FastAPI:
                     app.state.readiness["catalog"] = "ready"
             yield
         finally:
-            await database.dispose()
+            if owns_database and database is not None:
+                await database.dispose()
 
     app = FastAPI(lifespan=lifespan if lifespan_enabled else None)
-    app.state.database = database
+    app.state.database = initialized_database
     app.state.settings = settings
-    app.state.llm_gateway = LLMGateway(settings.llm)
-    app.state.catalog_path = Path("data/exercises.json")
-    app.state.schema_path = Path("data/exercises.schema.json")
-    initial_state = "pending" if lifespan_enabled else "ready"
+    app.state.llm_gateway = LLMGateway(settings.llm) if settings is not None else None
+    app.state.settings_path = settings_path
+    app.state.catalog_path = catalog_path
+    app.state.schema_path = schema_path
+    initialized = (
+        not lifespan_enabled
+        and settings is not None
+        and initialized_database is not None
+    )
+    initial_state = "ready" if initialized else "pending"
     app.state.readiness = {
         "database": initial_state,
         "catalog": initial_state,
@@ -82,3 +105,6 @@ def create_app(settings: Settings, lifespan_enabled: bool = True) -> FastAPI:
     app.include_router(exercise_router, dependencies=readiness_dependencies)
     app.include_router(session_router, dependencies=readiness_dependencies)
     return app
+
+
+app = create_app()

@@ -9,11 +9,6 @@ from httpx import ASGITransport, AsyncClient
 from exercise_api.api_models import ExerciseOut, RetrievalPlan
 from exercise_api.config import DatabaseSettings, RetrievalSettings, Settings
 from exercise_api.database import Database
-from exercise_api.dependencies import (
-    get_exercise_repository,
-    get_session_repository,
-)
-from exercise_api.exercise_repository import ExerciseRepository
 from exercise_api.llm_gateway import LLMUnavailableError
 from exercise_api.main import create_app
 from exercise_api.prompts import (
@@ -21,7 +16,6 @@ from exercise_api.prompts import (
     grounding_correction_message,
     retrieval_plan_messages,
 )
-from exercise_api.session_repository import SessionRepository
 from tests.factories import catalog_record
 from tests.fakes import FakeLLM
 
@@ -55,14 +49,8 @@ async def chat_client(
         database=DatabaseSettings(url="sqlite:///unused.db"),
         retrieval=RetrievalSettings(candidate_limit=30, result_limit=2),
     )
-    app = create_app(settings, lifespan_enabled=False)
+    app = create_app(settings, lifespan_enabled=False, initialized_database=database)
     app.state.llm_gateway = fake_llm
-    app.dependency_overrides[get_exercise_repository] = lambda: ExerciseRepository(
-        database.session_factory
-    )
-    app.dependency_overrides[get_session_repository] = lambda: SessionRepository(
-        database.session_factory
-    )
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:

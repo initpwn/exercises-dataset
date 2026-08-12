@@ -5,6 +5,7 @@ from typing import Annotated, cast
 from fastapi import Depends, HTTPException, Request, status
 
 from exercise_api.chat_service import ChatService, StructuredLLM
+from exercise_api.database import Database
 from exercise_api.exercise_repository import ExerciseRepository
 from exercise_api.retrieval import RetrievalService
 from exercise_api.session_repository import SessionRepository
@@ -20,14 +21,25 @@ def require_ready(request: Request) -> None:
         )
 
 
+def get_database(request: Request) -> Database:
+    """Resolve the initialized database without exposing partial startup state."""
+    database = getattr(request.app.state, "database", None)
+    if not isinstance(database, Database):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Application is not ready",
+        )
+    return database
+
+
 def get_exercise_repository(request: Request) -> ExerciseRepository:
     """Build a repository from the application's database session factory."""
-    return ExerciseRepository(request.app.state.database.session_factory)
+    return ExerciseRepository(get_database(request).session_factory)
 
 
 def get_session_repository(request: Request) -> SessionRepository:
     """Build a session repository from the application's database factory."""
-    return SessionRepository(request.app.state.database.session_factory)
+    return SessionRepository(get_database(request).session_factory)
 
 
 def get_chat_service(

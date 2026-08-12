@@ -9,8 +9,6 @@ from httpx import ASGITransport, AsyncClient
 from exercise_api.catalog import LoadedCatalog, sync_catalog
 from exercise_api.config import DatabaseSettings, Settings
 from exercise_api.database import Database
-from exercise_api.dependencies import get_exercise_repository
-from exercise_api.exercise_repository import ExerciseRepository
 from exercise_api.main import create_app
 from tests.factories import catalog_record
 
@@ -45,10 +43,7 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
 @pytest.fixture
 async def client(database: Database) -> AsyncIterator[AsyncClient]:
     settings = Settings(database=DatabaseSettings(url="sqlite:///unused.db"))
-    app = create_app(settings, lifespan_enabled=False)
-    app.dependency_overrides[get_exercise_repository] = lambda: ExerciseRepository(
-        database.session_factory
-    )
+    app = create_app(settings, lifespan_enabled=False, initialized_database=database)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as api_client:
