@@ -248,7 +248,19 @@ Run the parity suite separately while Docker Desktop (Linux containers) is runni
 rtk python -m pytest tests/postgres/test_postgres_parity.py -q -m postgres
 ```
 
-Live provider checks are deliberately opt-in. They send one ordinary `/chat/completions` request through the same `LLMGateway` used by the API and print a JSON object containing only `model`, `content`, and `status`. Failures return a nonzero exit code, and the script never prints the configured API key.
+Live provider checks are deliberately opt-in. They send one ordinary request through the configured `LLMGateway` and print a JSON object containing only `model`, `content`, and `status`. Failures return a nonzero exit code, and the script never prints the configured API key.
+
+LM Studio's native API uses this configuration (the default `config.toml` is ready for it):
+
+```toml
+[llm]
+api_format = "lmstudio"
+base_url = "http://localhost:1234/api/v1"
+api_key = ""
+model = "your-loaded-model-id"
+```
+
+If your provider exposes the OpenAI-compatible endpoint instead, use `api_format = "openai"` and a base URL ending in `/v1`.
 
 For a local Ollama OpenAI-compatible endpoint, set an installed model in `config.toml`, start Ollama, and run:
 

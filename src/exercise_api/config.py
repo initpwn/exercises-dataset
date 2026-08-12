@@ -37,6 +37,7 @@ class DatabaseSettings(BaseModel):
 
 
 class LLMSettings(BaseModel):
+    api_format: Literal["openai", "lmstudio"] = "openai"
     base_url: str = "http://localhost:11434/v1"
     api_key: str = "ollama"
     model: str = "your-model"

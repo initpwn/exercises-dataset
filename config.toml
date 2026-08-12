@@ -11,9 +11,10 @@ postgres_user = "exercise_user"
 postgres_password = "password"
 
 [llm]
-base_url = "http://localhost:11434/v1"
-api_key = "ollama"
-model = "your-model"
+api_format = "lmstudio"
+base_url = "http://localhost:1234/api/v1"
+api_key = ""
+model = "google/gemma-4-e4b"
 timeout_seconds = 60
 max_output_tokens = 2048
 

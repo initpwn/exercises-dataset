@@ -1,4 +1,4 @@
-"""OpenAI-compatible, provider-neutral structured-output gateway."""
+"""Provider-neutral structured-output gateway."""
 
 import json
 import logging
@@ -60,8 +60,9 @@ class LLMGateway:
 
         try:
             payload = response.json()
-            model = payload.get("model", self._settings.model)
-            content = payload["choices"][0]["message"]["content"]
+            model, content = _completion_fields(
+                payload, self._settings.api_format, self._settings.model
+            )
             if not isinstance(model, str) or not isinstance(content, str):
                 raise TypeError("completion fields must be text")
         except (json.JSONDecodeError, KeyError, IndexError, TypeError, AttributeError):
@@ -75,16 +76,34 @@ class LLMGateway:
         self, client: httpx.AsyncClient, messages: list[ChatMessage]
     ) -> httpx.Response:
         try:
-            response = await client.post(
-                f"{self._settings.base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {self._settings.api_key}"},
-                json={
+            if self._settings.api_format == "lmstudio":
+                system = [m.content for m in messages if m.role == "system"]
+                non_system = [m for m in messages if m.role != "system"]
+                body = {
+                    "model": self._settings.model,
+                    "input": "\n\n".join(
+                        f"{message.role.capitalize()}: {message.content}"
+                        for message in non_system
+                    ),
+                    "temperature": 0,
+                    "max_tokens": self._settings.max_output_tokens,
+                    "store": False,
+                }
+                if system:
+                    body["system_prompt"] = "\n\n".join(system)
+                url = f"{self._settings.base_url.rstrip('/')}/chat"
+            else:
+                body = {
                     "model": self._settings.model,
                     "messages": [message.model_dump() for message in messages],
                     "temperature": 0,
                     "max_tokens": self._settings.max_output_tokens,
-                },
-            )
+                }
+                url = f"{self._settings.base_url.rstrip('/')}/chat/completions"
+            headers = {}
+            if self._settings.api_key:
+                headers["Authorization"] = f"Bearer {self._settings.api_key}"
+            response = await client.post(url, headers=headers, json=body)
             response.raise_for_status()
             return response
         except (httpx.RequestError, httpx.HTTPStatusError) as exc:
@@ -125,9 +144,9 @@ class LLMGateway:
         response = await self._post_completion(client, messages)
 
         try:
-            content = response.json()["choices"][0]["message"]["content"]
-            if not isinstance(content, str):
-                raise TypeError("message content must be text")
+            content = _completion_fields(
+                response.json(), self._settings.api_format, self._settings.model
+            )[1]
             decoded = json.loads(_extract_json(content))
             return output_type.model_validate(decoded)
         except (
@@ -138,7 +157,10 @@ class LLMGateway:
             TypeError,
         ) as exc:
             raise _InvalidStructuredResponse(
-                _response_text(response), str(exc)
+                _response_text(
+                    response, self._settings.api_format, self._settings.model
+                ),
+                str(exc),
             ) from None
 
 
@@ -149,9 +171,40 @@ def _extract_json(content: str) -> str:
     return fenced.group(1) if fenced else content
 
 
-def _response_text(response: httpx.Response) -> str:
+def _completion_fields(
+    payload: object, api_format: str, configured_model: str
+) -> tuple[str, str]:
+    if not isinstance(payload, dict):
+        raise TypeError("completion payload must be an object")
+    if api_format == "lmstudio":
+        output = payload.get("output")
+        if isinstance(output, list):
+            content = "\n".join(
+                item["content"]
+                for item in output
+                if isinstance(item, dict) and isinstance(item.get("content"), str)
+            )
+        elif isinstance(output, str):
+            content = output
+        else:
+            content = payload.get("output_text", "")
+        model = (
+            payload.get("model") or payload.get("model_instance_id") or configured_model
+        )
+    else:
+        choices = payload["choices"]
+        content = choices[0]["message"]["content"]
+        model = payload.get("model", configured_model)
+    if not isinstance(model, str) or not isinstance(content, str) or not content:
+        raise TypeError("completion fields must be text")
+    return model, content
+
+
+def _response_text(
+    response: httpx.Response, api_format: str, configured_model: str
+) -> str:
     try:
-        content = response.json()["choices"][0]["message"]["content"]
+        content = _completion_fields(response.json(), api_format, configured_model)[1]
     except (json.JSONDecodeError, KeyError, IndexError, TypeError):
         return response.text
     return content if isinstance(content, str) else response.text

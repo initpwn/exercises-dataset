@@ -30,6 +30,7 @@ def test_rejects_non_positive_limits(tmp_path: Path) -> None:
 
 
 def test_provider_output_token_limit_defaults_and_bounds() -> None:
+    assert LLMSettings().api_format == "openai"
     assert LLMSettings().max_output_tokens == 2048
     with pytest.raises(ValidationError):
         LLMSettings(max_output_tokens=127)

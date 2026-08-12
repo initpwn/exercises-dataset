@@ -8,6 +8,7 @@ import pytest
 from pydantic import BaseModel, model_validator
 
 from exercise_api.api_models import ChatMessage, RetrievalPlan
+from exercise_api.config import LLMSettings
 from exercise_api.llm_gateway import (
     LLMGateway,
     LLMInvalidResponseError,
@@ -29,6 +30,16 @@ class CountingResponse(BaseModel):
 
 def messages() -> list[ChatMessage]:
     return [ChatMessage(role="user", content="find curls")]
+
+
+def lm_studio_settings() -> LLMSettings:
+    return LLMSettings(
+        base_url="http://lmstudio.test/api/v1",
+        api_key="",
+        model="test-model",
+        timeout_seconds=1,
+        api_format="lmstudio",
+    )
 
 
 def test_repair_prompt_accepts_malformed_output_before_validation_error() -> None:
@@ -71,6 +82,48 @@ async def test_request_uses_configured_openai_contract() -> None:
 
 
 @pytest.mark.asyncio
+async def test_request_can_use_lm_studio_native_chat_contract() -> None:
+    transport = SequenceTransport(
+        [
+            httpx.Response(
+                200,
+                json={
+                    "model_instance_id": "test-model",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": '{"intent":"exercise_search"}',
+                        }
+                    ],
+                },
+            )
+        ]
+    )
+    gateway = LLMGateway(lm_studio_settings(), transport=transport)
+
+    result = await gateway.generate_json(
+        [
+            ChatMessage(role="system", content="Return JSON."),
+            ChatMessage(role="user", content="find curls"),
+        ],
+        RetrievalPlan,
+    )
+
+    assert result.intent == "exercise_search"
+    request = transport.requests[0]
+    assert str(request.url) == "http://lmstudio.test/api/v1/chat"
+    assert "authorization" not in request.headers
+    assert json.loads(request.content) == {
+        "model": "test-model",
+        "input": "User: find curls",
+        "system_prompt": "Return JSON.",
+        "temperature": 0,
+        "max_tokens": 2048,
+        "store": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_completion_returns_only_provider_metadata_and_content() -> None:
     response = httpx.Response(
         200,
@@ -82,6 +135,24 @@ async def test_completion_returns_only_provider_metadata_and_content() -> None:
         },
     )
     gateway = LLMGateway(llm_settings(), transport=SequenceTransport([response]))
+
+    completion = await gateway.complete(messages())
+
+    assert completion.model == "served-model"
+    assert completion.content == "Try push-ups."
+    assert completion.status == 200
+
+
+@pytest.mark.asyncio
+async def test_lm_studio_completion_returns_output_content() -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "model_instance_id": "served-model",
+            "output": [{"type": "message", "content": "Try push-ups."}],
+        },
+    )
+    gateway = LLMGateway(lm_studio_settings(), transport=SequenceTransport([response]))
 
     completion = await gateway.complete(messages())
 

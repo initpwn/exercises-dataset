@@ -13,7 +13,7 @@ from exercise_api.llm_gateway import LLMGateway
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Send one message to the configured chat-completions provider."
+        description="Send one message to the configured LLM provider."
     )
     parser.add_argument(
         "--config",
