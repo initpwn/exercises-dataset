@@ -62,6 +62,28 @@ async def test_request_uses_configured_openai_contract() -> None:
 
 
 @pytest.mark.asyncio
+async def test_completion_returns_only_provider_metadata_and_content() -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "id": "completion-1",
+            "model": "served-model",
+            "choices": [
+                {"message": {"role": "assistant", "content": "Try push-ups."}}
+            ],
+            "usage": {"prompt_tokens": 4, "completion_tokens": 3},
+        },
+    )
+    gateway = LLMGateway(llm_settings(), transport=SequenceTransport([response]))
+
+    completion = await gateway.complete(messages())
+
+    assert completion.model == "served-model"
+    assert completion.content == "Try push-ups."
+    assert completion.status == 200
+
+
+@pytest.mark.asyncio
 async def test_extracts_markdown_fenced_json() -> None:
     transport = SequenceTransport(
         [assistant('```json\n{"intent":"exercise_search"}\n```')]

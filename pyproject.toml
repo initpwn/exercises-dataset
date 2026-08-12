@@ -21,6 +21,8 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+addopts = "-m 'not postgres'"
+markers = ["postgres: Docker-backed PostgreSQL integration tests"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

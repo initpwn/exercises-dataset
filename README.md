@@ -42,6 +42,7 @@
 - [Data Source](#-data-source)
 - [Overview](#-overview)
 - [Interactive Browser & Developer Setup](#-interactive-browser--developer-setup)
+- [Exercise Chat REST API](#-exercise-chat-rest-api)
 - [File Structure](#-file-structure)
 - [Statistics](#-statistics)
 - [Data Schema](#-data-schema)
@@ -100,6 +101,146 @@ A step-by-step guide for integrating the dataset into your own application:
 
 ---
 
+## 🤖 Exercise Chat REST API
+
+The repository also includes a FastAPI service that synchronizes the JSON dataset into SQLite or PostgreSQL. Clients can query the catalog directly or send conversational requests to an OpenAI-compatible model. The model selects only records from the synchronized catalog; it does not invent or replace catalog-owned exercise data.
+
+### Install and run
+
+Python 3.11 or newer is required. From the repository root, create a virtual environment and install the API with its development tools:
+
+```powershell
+rtk python -m venv .venv
+. .\.venv\Scripts\Activate.ps1
+rtk python -m pip install -e ".[dev]"
+```
+
+Review `config.toml`, then start the development server:
+
+```powershell
+rtk uvicorn exercise_api.main:app --reload
+```
+
+Startup creates the database schema, validates `data/exercises.json`, and synchronizes it into the database. Check readiness at `http://127.0.0.1:8000/health` and browse the generated OpenAPI client at `http://127.0.0.1:8000/docs`. `/health` does not contact the model provider.
+
+### Configure SQLite or PostgreSQL
+
+The checked-in `config.toml` uses a local SQLite file:
+
+```toml
+[database]
+url = "sqlite:///./exercise_api.db"
+
+[llm]
+base_url = "http://localhost:11434/v1"
+api_key = "ollama"
+model = "your-model"
+timeout_seconds = 60
+
+[retrieval]
+candidate_limit = 30
+result_limit = 10
+
+[sessions]
+history_message_limit = 20
+```
+
+To use PostgreSQL, change only the database URL:
+
+```toml
+[database]
+url = "postgresql+psycopg://exercise_user:password@localhost:5432/exercises"
+```
+
+The service also accepts `postgresql://` and Testcontainers-style `postgresql+psycopg2://` URLs and normalizes them to the async psycopg driver. The database and role must already exist and be allowed to create and alter application tables.
+
+Every setting can be overridden without editing the TOML file. Environment variable names use `EXERCISE_API__<SECTION>__<KEY>`:
+
+```powershell
+$env:EXERCISE_API__DATABASE__URL = "postgresql+psycopg://exercise_user:password@localhost:5432/exercises"
+$env:EXERCISE_API__LLM__BASE_URL = "https://provider.example/v1"
+$env:EXERCISE_API__LLM__API_KEY = "replace-with-a-secret"
+$env:EXERCISE_API__LLM__MODEL = "provider-model-name"
+rtk uvicorn exercise_api.main:app --reload
+```
+
+Use environment variables or a secret manager for API keys and database credentials; do not commit them to `config.toml`.
+
+### Direct catalog endpoints
+
+Direct catalog endpoints never invoke the LLM. Filters are case-insensitive literal substring matches, multiple filters use AND semantics, and list results are ordered by exercise ID.
+
+```powershell
+curl.exe "http://127.0.0.1:8000/exercises?page=1&limit=10&category=chest&equipment=body%20weight"
+curl.exe "http://127.0.0.1:8000/exercises/random"
+curl.exe "http://127.0.0.1:8000/categories"
+curl.exe "http://127.0.0.1:8000/body-parts"
+curl.exe "http://127.0.0.1:8000/equipment"
+```
+
+`GET /exercises` accepts `page`, `limit`, `category`, `body_part`, `equipment`, `muscle_group`, and `target`. Its response contains `data`, `page`, `limit`, `total`, and `totalPages`.
+
+### Chat and persistent sessions
+
+Omit `session_id` on the first chat request. The response includes a new session ID plus either renderable search `results` or a structured `workout`:
+
+```powershell
+curl.exe -X POST "http://127.0.0.1:8000/v1/chat" `
+  -H "Content-Type: application/json" `
+  -d '{"message":"Find body-weight chest exercises"}'
+```
+
+Pass the returned UUID to continue the conversation:
+
+```powershell
+curl.exe -X POST "http://127.0.0.1:8000/v1/chat" `
+  -H "Content-Type: application/json" `
+  -d '{"session_id":"REPLACE_WITH_SESSION_UUID","message":"Turn those into a 20 minute workout"}'
+```
+
+Sessions can also be managed directly:
+
+```powershell
+curl.exe -X POST "http://127.0.0.1:8000/v1/sessions"
+curl.exe "http://127.0.0.1:8000/v1/sessions/REPLACE_WITH_SESSION_UUID"
+curl.exe -X DELETE "http://127.0.0.1:8000/v1/sessions/REPLACE_WITH_SESSION_UUID"
+```
+
+### Tests and provider smoke checks
+
+The deterministic suite uses SQLite and local HTTP doubles; it does not require credentials, network access, or Docker. PostgreSQL tests are marked and excluded from the default run:
+
+```powershell
+rtk python -m pytest -q
+rtk ruff check src tests scripts
+rtk mypy src scripts
+```
+
+Run the parity suite separately while Docker Desktop (Linux containers) is running. Testcontainers starts disposable `postgres:17-alpine` instances and removes them after the tests:
+
+```powershell
+rtk python -m pytest tests/postgres/test_postgres_parity.py -q -m postgres
+```
+
+Live provider checks are deliberately opt-in. They send one ordinary `/chat/completions` request through the same `LLMGateway` used by the API and print a JSON object containing only `model`, `content`, and `status`. Failures return a nonzero exit code, and the script never prints the configured API key.
+
+For a local Ollama OpenAI-compatible endpoint, set an installed model in `config.toml`, start Ollama, and run:
+
+```powershell
+rtk python scripts/smoke_llm.py --config config.toml --message "Find body-weight chest exercises"
+```
+
+For an OpenAI-compatible cloud provider, keep secrets in environment overrides:
+
+```powershell
+$env:EXERCISE_API__LLM__BASE_URL = "https://provider.example/v1"
+$env:EXERCISE_API__LLM__API_KEY = "replace-with-a-secret"
+$env:EXERCISE_API__LLM__MODEL = "provider-model-name"
+rtk python scripts/smoke_llm.py --config config.toml --message "Find body-weight chest exercises"
+```
+
+---
+
 ## 📂 File Structure
 
 ```
@@ -111,6 +252,13 @@ exercises-dataset/
 ├── videos/                  # 1,324 × 180×180 animation GIFs  (© Gym visual)
 ├── index.html               # Interactive exercise browser (client-side, no server needed)
 ├── setup.html               # Developer setup guide (DB import + API integration)
+├── config.toml              # REST API database, provider, retrieval, and session defaults
+├── pyproject.toml           # Python package, test, and static-check configuration
+├── scripts/
+│   └── smoke_llm.py         # Opt-in OpenAI-compatible provider smoke check
+├── src/exercise_api/        # FastAPI service, retrieval, sync, and persistence
+├── tests/                   # Deterministic SQLite and HTTP contract suite
+│   └── postgres/            # Opt-in Docker-backed PostgreSQL parity suite
 ├── NOTICE.md                # Media attribution & license terms
 └── README.md
 ```
@@ -122,6 +270,9 @@ exercises-dataset/
 - **`images/`, `videos/`** — 180×180 thumbnails and animation GIFs (© [Gym visual](https://gymvisual.com/), used with permission).
 - **`index.html`** — Standalone exercise browser. Open directly in any modern browser.
 - **`setup.html`** — Developer guide for DB setup, API integration, and LLM-assisted backend generation.
+- **`src/exercise_api/`** — FastAPI application, SQLAlchemy persistence, deterministic retrieval, and provider-neutral LLM gateway.
+- **`config.toml`** — Non-secret defaults for SQLite or PostgreSQL, the OpenAI-compatible provider, retrieval bounds, and session history.
+- **`scripts/smoke_llm.py`** — Explicit live-provider connectivity check; it is never run by the deterministic test suite.
 - **`LICENSE`, `NOTICE.md`** — MIT (code/data) + the Gym visual media terms.
 
 ---

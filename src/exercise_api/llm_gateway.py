@@ -22,6 +22,14 @@ class LLMInvalidResponseError(Exception):
     """Raised when the model twice returns invalid structured output."""
 
 
+class LLMCompletion(BaseModel):
+    """Minimal provider response exposed by the opt-in smoke command."""
+
+    model: str
+    content: str
+    status: int
+
+
 class _InvalidStructuredResponse(Exception):
     def __init__(self, malformed_output: str, validation_error: str) -> None:
         self.malformed_output = malformed_output
@@ -39,6 +47,45 @@ class LLMGateway:
     ) -> None:
         self._settings = settings
         self._transport = transport
+
+    async def complete(self, messages: list[ChatMessage]) -> LLMCompletion:
+        """Return one ordinary chat completion without structured validation."""
+        async with httpx.AsyncClient(
+            transport=self._transport,
+            timeout=self._settings.timeout_seconds,
+        ) as client:
+            response = await self._post_completion(client, messages)
+
+        try:
+            payload = response.json()
+            model = payload.get("model", self._settings.model)
+            content = payload["choices"][0]["message"]["content"]
+            if not isinstance(model, str) or not isinstance(content, str):
+                raise TypeError("completion fields must be text")
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError, AttributeError):
+            raise LLMInvalidResponseError(
+                "Model returned an invalid chat completion"
+            ) from None
+
+        return LLMCompletion(model=model, content=content, status=response.status_code)
+
+    async def _post_completion(
+        self, client: httpx.AsyncClient, messages: list[ChatMessage]
+    ) -> httpx.Response:
+        try:
+            response = await client.post(
+                f"{self._settings.base_url.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {self._settings.api_key}"},
+                json={
+                    "model": self._settings.model,
+                    "messages": [message.model_dump() for message in messages],
+                    "temperature": 0,
+                },
+            )
+            response.raise_for_status()
+            return response
+        except (httpx.RequestError, httpx.HTTPStatusError):
+            raise LLMUnavailableError("Model service is unavailable") from None
 
     async def generate_json(
         self, messages: list[ChatMessage], output_type: type[T]
@@ -70,19 +117,7 @@ class LLMGateway:
         messages: list[ChatMessage],
         output_type: type[T],
     ) -> T:
-        try:
-            response = await client.post(
-                f"{self._settings.base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {self._settings.api_key}"},
-                json={
-                    "model": self._settings.model,
-                    "messages": [message.model_dump() for message in messages],
-                    "temperature": 0,
-                },
-            )
-            response.raise_for_status()
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError):
-            raise LLMUnavailableError("Model service is unavailable") from None
+        response = await self._post_completion(client, messages)
 
         try:
             content = response.json()["choices"][0]["message"]["content"]
