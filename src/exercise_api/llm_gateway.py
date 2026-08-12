@@ -199,6 +199,9 @@ def _normalize_structured_payload(payload: object, output_type: type[T]) -> obje
     if not isinstance(payload, dict):
         return payload
     normalized = dict(payload)
+    if output_type is WorkoutDecision and isinstance(payload.get("workout"), dict):
+        normalized = {key: value for key, value in payload.items() if key != "workout"}
+        normalized.update(payload["workout"])
     if (
         output_type is RetrievalPlan
         and "intent" not in payload

@@ -263,6 +263,44 @@ async def test_workout_presentation_fields_are_normalized() -> None:
 
 
 @pytest.mark.asyncio
+async def test_nested_workout_wrapper_is_normalized() -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "model_instance_id": "test-model",
+            "output": [
+                {
+                    "type": "message",
+                    "content": json.dumps(
+                        {
+                            "workout": {
+                                "name": "Barbell Chest Workout",
+                                "estimated_duration_minutes": 30,
+                                "selections": [
+                                    {
+                                        "id": "0001",
+                                        "sets": 3,
+                                        "reps": "8-12",
+                                        "rest_seconds": 60,
+                                    }
+                                ],
+                                "description": "A focused chest workout.",
+                            }
+                        }
+                    ),
+                }
+            ],
+        },
+    )
+    gateway = LLMGateway(lm_studio_settings(), transport=SequenceTransport([response]))
+
+    result = await gateway.generate_json(messages(), WorkoutDecision)
+
+    assert result.name == "Barbell Chest Workout"
+    assert result.answer == "A focused chest workout."
+
+
+@pytest.mark.asyncio
 async def test_completion_returns_only_provider_metadata_and_content() -> None:
     response = httpx.Response(
         200,
