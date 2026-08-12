@@ -4,13 +4,14 @@ import asyncio
 from uuid import UUID
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from testcontainers.community.postgres import PostgresContainer
 
 from exercise_api.catalog import LoadedCatalog, sync_catalog
 from exercise_api.database import Database, async_database_url
+from exercise_api.db_models import MessageRow, SessionRow
 from exercise_api.exercise_repository import ExerciseFilters, ExerciseRepository
-from exercise_api.session_repository import SessionRepository
+from exercise_api.session_repository import SessionNotFoundError, SessionRepository
 from tests.factories import catalog_record
 
 
@@ -64,6 +65,11 @@ async def test_postgres_catalog_filters_and_session_restart() -> None:
             "response",
         ]
         assert restarted.messages[1].payload == {"intent": "exercise_search"}
+        assert restarted.created_at.utcoffset() is not None
+        assert restarted.updated_at > restarted.created_at
+        assert all(
+            message.created_at.utcoffset() is not None for message in restarted.messages
+        )
         await restarted_database.dispose()
 
 
@@ -90,6 +96,24 @@ async def test_postgres_concurrent_session_appends_are_ordered() -> None:
             "user",
             "assistant",
         ]
+        raced = await sessions.create()
+        race_results = await asyncio.gather(
+            sessions.delete(raced.id),
+            sessions.append_exchange(raced.id, "late user", "late assistant", None),
+            return_exceptions=True,
+        )
+        assert race_results[0] is True
+        assert race_results[1] is None or isinstance(
+            race_results[1], SessionNotFoundError
+        )
+        async with database.session_factory() as checking:
+            assert await checking.get(SessionRow, str(raced.id)) is None
+            orphan_count = await checking.scalar(
+                select(func.count())
+                .select_from(MessageRow)
+                .where(MessageRow.session_id == str(raced.id))
+            )
+        assert orphan_count == 0
         await database.dispose()
 
 
@@ -149,7 +173,11 @@ async def test_postgres_schema_upgrade_initializes_session_counter() -> None:
                 )
             )
 
-        await database.create_schema()
+        second_database = Database(async_database_url(postgres.get_connection_url()))
+        await asyncio.gather(
+            database.create_schema(),
+            second_database.create_schema(),
+        )
         await database.create_schema()
         sessions = SessionRepository(database.session_factory)
         loaded = await sessions.get(UUID("00000000-0000-0000-0000-000000000001"))
@@ -162,4 +190,7 @@ async def test_postgres_schema_upgrade_initializes_session_counter() -> None:
         assert upgraded is not None
         assert [message.position for message in upgraded.messages] == [0, 1, 2, 3]
         assert upgraded.messages[-1].payload == {"intent": "workout"}
+        assert upgraded.updated_at >= upgraded.created_at
+        assert upgraded.updated_at.utcoffset() is not None
+        await second_database.dispose()
         await database.dispose()

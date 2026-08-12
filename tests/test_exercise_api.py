@@ -1,5 +1,6 @@
 """Contract tests for the direct exercise catalog API."""
 
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -95,6 +96,32 @@ async def test_each_filter_is_case_insensitive_partial_match(
 ) -> None:
     body = (await client.get("/exercises", params={field: value})).json()
     assert body["total"] == 2
+
+
+@pytest.mark.parametrize(
+    ("params", "expected_total"),
+    [
+        ({"equipment": " DUMB "}, 2),
+        ({"category": "   "}, 3),
+    ],
+)
+@pytest.mark.asyncio
+async def test_filter_values_are_trimmed_and_blank_is_absent(
+    client: AsyncClient, params: dict[str, str], expected_total: int
+) -> None:
+    response = await client.get("/exercises", params=params)
+
+    assert response.status_code == 200
+    assert response.json()["total"] == expected_total
+
+
+@pytest.mark.asyncio
+async def test_catalog_timestamps_are_returned_as_utc(client: AsyncClient) -> None:
+    body = (await client.get("/exercises", params={"limit": 1})).json()
+
+    created_at = datetime.fromisoformat(body["data"][0]["created_at"])
+    assert created_at.utcoffset() is not None
+    assert created_at.utcoffset().total_seconds() == 0
 
 
 @pytest.mark.asyncio

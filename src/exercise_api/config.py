@@ -18,6 +18,7 @@ class LLMSettings(BaseModel):
     api_key: str = "ollama"
     model: str = "your-model"
     timeout_seconds: int = Field(default=60, gt=0)
+    max_output_tokens: int = Field(default=2048, ge=128, le=8192)
 
 
 class RetrievalSettings(BaseModel):

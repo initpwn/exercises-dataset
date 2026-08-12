@@ -1,11 +1,21 @@
 """FastAPI application factory."""
 
+import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import (
+    DBAPIError,
+    DisconnectionError,
+    InterfaceError,
+    OperationalError,
+)
+from sqlalchemy.exc import (
+    TimeoutError as SQLAlchemyTimeoutError,
+)
 
 from exercise_api.catalog import load_catalog, sync_catalog
 from exercise_api.chat_service import StructuredLLM
@@ -21,6 +31,8 @@ from exercise_api.routes.chat import router as chat_router
 from exercise_api.routes.exercises import router as exercise_router
 from exercise_api.routes.health import router as health_router
 from exercise_api.routes.sessions import router as session_router
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(
@@ -51,7 +63,11 @@ def create_app(
                 if app.state.llm_gateway is None:
                     app.state.llm_gateway = LLMGateway(resolved_settings.llm)
                 await database.create_schema()
-            except Exception:  # noqa: BLE001 - health must survive startup failures.
+            except Exception as exc:  # noqa: BLE001 - health must survive startup.
+                logger.error(
+                    "Application database initialization failed (%s)",
+                    type(exc).__name__,
+                )
                 app.state.readiness.update(database="failed", catalog="failed")
             else:
                 app.state.readiness["database"] = "ready"
@@ -60,7 +76,11 @@ def create_app(
                         app.state.catalog_path, app.state.schema_path
                     )
                     await sync_catalog(database.session_factory, catalog)
-                except Exception:  # noqa: BLE001 - health must report sync failures.
+                except Exception as exc:  # noqa: BLE001 - health reports failures.
+                    logger.error(
+                        "Application catalog initialization failed (%s)",
+                        type(exc).__name__,
+                    )
                     app.state.readiness["catalog"] = "failed"
                 else:
                     app.state.readiness["catalog"] = "ready"
@@ -104,6 +124,33 @@ def create_app(
             status_code=status.HTTP_502_BAD_GATEWAY,
             content={"detail": "Model returned an invalid grounded response"},
         )
+
+    async def database_unavailable(request: Request, error: Exception) -> JSONResponse:
+        request.app.state.readiness["database"] = "failed"
+        logger.error("Database operation failed (%s)", type(error).__name__)
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"detail": "Database service is unavailable"},
+        )
+
+    async def invalidated_database_connection(
+        request: Request, error: Exception
+    ) -> JSONResponse:
+        if not isinstance(error, DBAPIError):
+            raise error
+        if not error.connection_invalidated:
+            raise error
+        return await database_unavailable(request, error)
+
+    app.add_exception_handler(DBAPIError, invalidated_database_connection)
+
+    for database_error in (
+        OperationalError,
+        InterfaceError,
+        SQLAlchemyTimeoutError,
+        DisconnectionError,
+    ):
+        app.add_exception_handler(database_error, database_unavailable)
 
     readiness_dependencies = [Depends(require_ready)]
     app.include_router(health_router)

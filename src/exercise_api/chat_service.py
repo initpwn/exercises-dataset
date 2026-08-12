@@ -1,6 +1,5 @@
 """Grounded two-stage conversational search and workout orchestration."""
 
-import re
 from typing import Protocol, TypeVar, cast
 from uuid import UUID
 
@@ -13,12 +12,18 @@ from exercise_api.api_models import (
     ExerciseOut,
     ExerciseSearchDecision,
     GroundedDecision,
+    PriorTurnContext,
     RetrievalPlan,
     WorkoutDecision,
     WorkoutExercise,
     WorkoutOut,
 )
 from exercise_api.config import Settings
+from exercise_api.conversation_context import (
+    ConversationContextBuilder,
+    is_follow_up,
+    reference_ids,
+)
 from exercise_api.exercise_repository import ExerciseRepository
 from exercise_api.prompts import (
     grounded_answer_messages,
@@ -26,6 +31,13 @@ from exercise_api.prompts import (
     retrieval_plan_messages,
 )
 from exercise_api.retrieval import RetrievalService
+from exercise_api.safety import (
+    decision_problems,
+    has_medical_context,
+    response_assumptions,
+    response_warnings,
+    retain_user_stated_preferences,
+)
 from exercise_api.session_repository import SessionNotFoundError, SessionRepository
 
 T = TypeVar("T", bound=BaseModel)
@@ -43,23 +55,6 @@ class UngroundedLLMResponseError(Exception):
     """Raised when the sole grounding correction still selects unknown IDs."""
 
 
-_MEDICAL_CONTEXT_PATTERNS = (
-    r"\bpain(?:ful)?\b",
-    r"\binjur(?:y|ies|ed)\b",
-    r"\bpregnan(?:t|cy)\b",
-    r"\brehab(?:bing|bed|s|ilitation)?\b",
-    r"\b(?:medical|health|heart)\s+conditions?\b",
-    r"\b(?:asthma|diabetes)\b",
-)
-_MEDICAL_CONTEXT_PATTERN = re.compile(
-    "|".join(_MEDICAL_CONTEXT_PATTERNS),
-    flags=re.IGNORECASE,
-)
-_MEDICAL_WARNING = (
-    "This is general exercise information, not medical advice; seek qualified "
-    "professional guidance before exercising with pain, injury, pregnancy, "
-    "rehabilitation needs, or a medical condition."
-)
 _NO_MATCH_WARNING = "No catalog exercises matched the requested constraints."
 
 
@@ -79,32 +74,82 @@ class ChatService:
         self._exercises = exercises
         self._llm = llm
         self._settings = settings
+        self._context = ConversationContextBuilder(exercises)
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
         session_id = await self._resolve_session(request.session_id)
         history = await self._sessions.recent_messages(
             session_id, self._settings.sessions.history_message_limit
         )
+        prior_context = await self._context.build(history)
+        vocabulary = await self._retrieval.vocabulary()
         plan = await self._llm.generate_json(
-            retrieval_plan_messages(history, request.message), RetrievalPlan
+            retrieval_plan_messages(
+                history,
+                request.message,
+                vocabulary.prompt_values(),
+                prior_context,
+            ),
+            RetrievalPlan,
         )
+        plan = self._retrieval.normalize_plan(plan, request.message, vocabulary)
+        plan = retain_user_stated_preferences(plan, request.message)
+        uses_prior_context = is_follow_up(plan, request.message)
+        referenced_ids = reference_ids(plan, prior_context, uses_prior_context)
+        plan = plan.model_copy(
+            update={
+                "uses_prior_context": uses_prior_context,
+                "referenced_ids": referenced_ids or [],
+            }
+        )
+        medical_context = has_medical_context(plan, history, request.message)
+        retrieval_plan = plan
+        body_weight_preferred = False
+        if (
+            plan.intent == "workout"
+            and plan.equipment is None
+            and not uses_prior_context
+        ):
+            body_weight = vocabulary.aliases["equipment"].get("bodyweight")
+            if body_weight is not None:
+                retrieval_plan = plan.model_copy(update={"equipment": body_weight})
+                body_weight_preferred = True
         candidates = await self._retrieval.retrieve(
-            plan, request.message, self._settings.retrieval.candidate_limit
+            retrieval_plan,
+            request.message,
+            self._settings.retrieval.candidate_limit,
+            vocabulary=vocabulary,
+            reference_ids=referenced_ids if uses_prior_context else None,
+            enforce_plan_constraints=body_weight_preferred,
         )
+        if not candidates and body_weight_preferred:
+            candidates = await self._retrieval.retrieve(
+                plan,
+                request.message,
+                self._settings.retrieval.candidate_limit,
+                vocabulary=vocabulary,
+            )
 
         if not candidates:
             response = ChatResponse(
                 session_id=session_id,
                 answer="I could not find catalog exercises matching those constraints.",
                 intent=plan.intent,
-                assumptions=[],
+                assumptions=response_assumptions(
+                    plan, [], medical_context, uses_prior_context
+                ),
                 workout=None,
                 results=[],
-                warnings=self._safety_warnings(request.message, [_NO_MATCH_WARNING]),
+                warnings=response_warnings(medical_context, [_NO_MATCH_WARNING]),
             )
         else:
             response = await self._generate_grounded_response(
-                session_id, request.message, plan, candidates
+                session_id,
+                request.message,
+                plan,
+                candidates,
+                prior_context,
+                medical_context,
             )
 
         payload = response.model_dump(mode="json")
@@ -126,6 +171,8 @@ class ChatService:
         current_text: str,
         plan: RetrievalPlan,
         candidates: list[ExerciseOut],
+        prior_context: list[PriorTurnContext],
+        medical_context: bool,
     ) -> ChatResponse:
         output_type: type[ExerciseSearchDecision | WorkoutDecision]
         output_type = (
@@ -138,6 +185,7 @@ class ChatService:
             current_text,
             candidates,
             self._settings.retrieval.result_limit,
+            prior_context,
         )
         decision = cast(
             GroundedDecision,
@@ -145,12 +193,14 @@ class ChatService:
         )
         candidate_ids = {candidate.id for candidate in candidates}
         hydrated = await self._hydrate(decision, candidate_ids)
-        if hydrated is None:
+        problems = decision_problems(plan, decision, hydrated)
+        if problems:
             correction_messages = [
                 *generation_messages,
                 grounding_correction_message(
                     [item.id for item in candidates],
                     self._settings.retrieval.result_limit,
+                    problems,
                 ),
             ]
             decision = cast(
@@ -158,18 +208,23 @@ class ChatService:
                 await self._llm.generate_json(correction_messages, output_type),
             )
             hydrated = await self._hydrate(decision, candidate_ids)
-            if hydrated is None:
+            problems = decision_problems(plan, decision, hydrated)
+            if problems:
                 raise UngroundedLLMResponseError(
-                    "Model selected unknown catalog exercise IDs"
+                    "Model response remained ungrounded or unsafe"
                 )
 
-        warnings = self._safety_warnings(current_text, decision.warnings)
+        assert hydrated is not None
+        warnings = response_warnings(medical_context, decision.warnings)
+        assumptions = response_assumptions(
+            plan, decision.assumptions, medical_context, plan.uses_prior_context
+        )
         if isinstance(decision, ExerciseSearchDecision):
             return ChatResponse(
                 session_id=session_id,
                 answer=decision.answer,
                 intent="exercise_search",
-                assumptions=decision.assumptions,
+                assumptions=assumptions,
                 results=cast(list[ExerciseOut], hydrated),
                 workout=None,
                 warnings=warnings,
@@ -178,7 +233,7 @@ class ChatService:
             session_id=session_id,
             answer=decision.answer,
             intent="workout",
-            assumptions=decision.assumptions,
+            assumptions=assumptions,
             workout=WorkoutOut(
                 name=decision.name,
                 estimated_duration_minutes=decision.estimated_duration_minutes,
@@ -222,10 +277,3 @@ class ChatService:
             )
             for selection in workout_selections
         ]
-
-    @staticmethod
-    def _safety_warnings(text: str, warnings: list[str]) -> list[str]:
-        result = list(warnings)
-        if _MEDICAL_CONTEXT_PATTERN.search(text) and _MEDICAL_WARNING not in result:
-            result.append(_MEDICAL_WARNING)
-        return result

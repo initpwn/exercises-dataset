@@ -8,12 +8,15 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
+from sqlalchemy import event
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from exercise_api.api_models import ChatMessage
 from exercise_api.config import DatabaseSettings, Settings
 from exercise_api.database import Database
 from exercise_api.llm_gateway import LLMUnavailableError
 from exercise_api.main import create_app
+from tests.fakes import FakeLLM
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -201,3 +204,68 @@ async def test_explicit_ready_injection_enables_initialized_test_app(
     assert health.status_code == 200
     assert direct.status_code == 200
     await database.dispose()
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("GET", "/exercises", None),
+        ("POST", "/v1/sessions", None),
+        ("POST", "/v1/chat", {"message": "find curls"}),
+    ],
+)
+@pytest.mark.parametrize(
+    "invalidated_wrapper", [False, True], ids=["operational", "invalidated"]
+)
+@pytest.mark.asyncio
+async def test_runtime_database_failure_returns_sanitized_503_and_flips_health(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    method: str,
+    path: str,
+    payload: dict[str, str] | None,
+    invalidated_wrapper: bool,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'runtime-failure.db'}")
+    await database.create_schema()
+    secret = "database-password-secret"
+
+    def fail_query(*_: object) -> None:
+        if invalidated_wrapper:
+            raise ProgrammingError(
+                f"SELECT '{secret}'",
+                {"credential": secret},
+                RuntimeError(secret),
+                connection_invalidated=True,
+            )
+        raise OperationalError(
+            f"SELECT '{secret}'", {"credential": secret}, RuntimeError(secret)
+        )
+
+    event.listen(database.engine.sync_engine, "before_cursor_execute", fail_query)
+    app = create_app(
+        Settings(database=DatabaseSettings(url="sqlite:///unused.db")),
+        lifespan_enabled=False,
+        initialized_database=database,
+        initial_readiness={"database": "ready", "catalog": "ready"},
+        llm_gateway=FakeLLM(),
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            with caplog.at_level("ERROR"):
+                response = await client.request(method, path, json=payload)
+            health = await client.get("/health")
+    finally:
+        event.remove(database.engine.sync_engine, "before_cursor_execute", fail_query)
+        await database.dispose()
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Database service is unavailable"}
+    assert health.status_code == 503
+    assert health.json()["database"] == "failed"
+    assert health.json()["catalog"] == "ready"
+    assert "Database operation failed" in caplog.text
+    assert secret not in response.text
+    assert secret not in caplog.text

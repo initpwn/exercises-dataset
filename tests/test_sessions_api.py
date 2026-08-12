@@ -2,19 +2,20 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from datetime import UTC
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event, text
+from sqlalchemy import event, func, inspect, select, text
 from sqlalchemy.orm import Session as SyncSession
 
 from exercise_api.config import DatabaseSettings, Settings
 from exercise_api.database import Database
 from exercise_api.db_models import MessageRow, SessionRow
 from exercise_api.main import create_app
-from exercise_api.session_repository import SessionRepository
+from exercise_api.session_repository import SessionNotFoundError, SessionRepository
 
 
 @pytest.fixture
@@ -60,7 +61,24 @@ async def test_session_survives_database_reopen(tmp_path: Path) -> None:
         None,
         {"intent": "workout"},
     ]
+    assert loaded.created_at.tzinfo is UTC
+    assert loaded.updated_at.tzinfo is UTC
+    assert all(message.created_at.tzinfo is UTC for message in loaded.messages)
     await second_db.dispose()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_enables_foreign_keys_on_every_connection(tmp_path: Path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'foreign-keys.db'}")
+
+    async with (
+        database.engine.connect() as first,
+        database.engine.connect() as second,
+    ):
+        assert await first.scalar(text("PRAGMA foreign_keys")) == 1
+        assert await second.scalar(text("PRAGMA foreign_keys")) == 1
+
+    await database.dispose()
 
 
 @pytest.mark.asyncio
@@ -113,6 +131,80 @@ async def test_concurrent_appends_reserve_unique_ordered_positions(
         ["user 1", "assistant 1", "user 2", "assistant 2"],
         ["user 2", "assistant 2", "user 1", "assistant 1"],
     )
+    await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_delete_racing_with_append_never_leaves_orphan_messages(
+    tmp_path: Path,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'delete-append.db'}")
+    await database.create_schema()
+    repository = SessionRepository(database.session_factory)
+    created = await repository.create()
+
+    results = await asyncio.gather(
+        repository.delete(created.id),
+        repository.append_exchange(
+            created.id, "late user", "late assistant", {"intent": "workout"}
+        ),
+        return_exceptions=True,
+    )
+
+    assert results[0] is True
+    assert results[1] is None or isinstance(results[1], SessionNotFoundError)
+    async with database.session_factory() as checking:
+        parent = await checking.get(SessionRow, str(created.id))
+        orphan_count = await checking.scalar(
+            select(func.count())
+            .select_from(MessageRow)
+            .where(MessageRow.session_id == str(created.id))
+        )
+    assert parent is None
+    assert orphan_count == 0
+    await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_database_cascade_catches_append_between_delete_load_and_commit(
+    tmp_path: Path,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'delete-interleave.db'}")
+    await database.create_schema()
+    repository = SessionRepository(database.session_factory)
+    created = await repository.create()
+
+    async with database.session_factory() as deleting:
+        row = await deleting.get(SessionRow, str(created.id))
+        assert row is not None
+        await deleting.delete(row)
+        await repository.append_exchange(
+            created.id, "late user", "late assistant", None
+        )
+        await deleting.commit()
+
+    async with database.session_factory() as checking:
+        assert await checking.get(SessionRow, str(created.id)) is None
+        orphan_count = await checking.scalar(
+            select(func.count())
+            .select_from(MessageRow)
+            .where(MessageRow.session_id == str(created.id))
+        )
+    assert orphan_count == 0
+    await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_append_after_committed_delete_is_not_found(tmp_path: Path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'append-after-delete.db'}")
+    await database.create_schema()
+    repository = SessionRepository(database.session_factory)
+    created = await repository.create()
+
+    assert await repository.delete(created.id) is True
+    with pytest.raises(SessionNotFoundError):
+        await repository.append_exchange(created.id, "user", "assistant", None)
+
     await database.dispose()
 
 
@@ -223,6 +315,63 @@ async def test_schema_upgrade_initializes_counter_from_existing_messages(
         "new user",
         "new assistant",
     ]
+    assert loaded.updated_at >= loaded.created_at
+    await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_legacy_schema_initializers_are_idempotent(
+    tmp_path: Path,
+) -> None:
+    url = f"sqlite+aiosqlite:///{tmp_path / 'concurrent-upgrade.db'}"
+    bootstrap = Database(url)
+    async with bootstrap.engine.begin() as connection:
+        await connection.execute(
+            text(
+                """
+                CREATE TABLE conversation_sessions (
+                    id VARCHAR(36) PRIMARY KEY,
+                    created_at DATETIME NOT NULL
+                )
+                """
+            )
+        )
+    await bootstrap.dispose()
+
+    initializers = [Database(url) for _ in range(4)]
+    try:
+        results = await asyncio.gather(
+            *(database.create_schema() for database in initializers),
+            return_exceptions=True,
+        )
+        assert results == [None, None, None, None]
+        async with initializers[0].engine.connect() as connection:
+            columns = await connection.run_sync(
+                lambda sync_connection: {
+                    column["name"]
+                    for column in inspect(sync_connection).get_columns(
+                        "conversation_sessions"
+                    )
+                }
+            )
+        assert {"next_position", "updated_at"} <= columns
+    finally:
+        await asyncio.gather(*(database.dispose() for database in initializers))
+
+
+@pytest.mark.asyncio
+async def test_append_advances_session_updated_at(tmp_path: Path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'updated-at.db'}")
+    await database.create_schema()
+    repository = SessionRepository(database.session_factory)
+    created = await repository.create()
+
+    await repository.append_exchange(created.id, "user", "assistant", None)
+    loaded = await repository.get(created.id)
+
+    assert loaded is not None
+    assert loaded.updated_at > created.updated_at
+    assert loaded.updated_at.tzinfo is UTC
     await database.dispose()
 
 

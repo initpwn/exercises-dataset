@@ -16,6 +16,9 @@ from exercise_api.api_models import ExerciseOut, ExercisePage
 from exercise_api.db_models import ExerciseRow
 
 DistinctField = Literal["category", "body_part", "equipment"]
+ConstraintField = Literal[
+    "category", "body_part", "equipment", "muscle_group", "target"
+]
 
 
 @dataclass(frozen=True)
@@ -52,9 +55,12 @@ class ExerciseRepository:
             "target",
         ):
             value = getattr(filters, field)
-            if value is not None:
+            normalized_value = value.strip() if value is not None else ""
+            if normalized_value:
                 column = getattr(ExerciseRow, field)
-                conditions.append(column.ilike(_literal_contains(value), escape="\\"))
+                conditions.append(
+                    column.ilike(_literal_contains(normalized_value), escape="\\")
+                )
 
         async with self._session_factory() as session:
             total = await session.scalar(
@@ -105,9 +111,10 @@ class ExerciseRepository:
             "target",
         ):
             value = getattr(filters, field)
-            if value is not None:
+            normalized_value = value.strip() if value is not None else ""
+            if normalized_value:
                 column = getattr(ExerciseRow, field)
-                conditions.append(func.lower(column) == value.strip().lower())
+                conditions.append(func.lower(column) == normalized_value.lower())
 
         async with self._session_factory() as session:
             rows = (
@@ -131,6 +138,28 @@ class ExerciseRepository:
         for value in ordered:
             normalized.setdefault(value.casefold(), value)
         return list(normalized.values())
+
+    async def constraint_values(
+        self,
+    ) -> dict[ConstraintField, builtins.list[str]]:
+        """Return canonical catalog vocabularies for every hard-filter field."""
+        columns: dict[ConstraintField, InstrumentedAttribute[str]] = {
+            "category": ExerciseRow.category,
+            "body_part": ExerciseRow.body_part,
+            "equipment": ExerciseRow.equipment,
+            "muscle_group": ExerciseRow.muscle_group,
+            "target": ExerciseRow.target,
+        }
+        result: dict[ConstraintField, builtins.list[str]] = {}
+        async with self._session_factory() as session:
+            for field, column in columns.items():
+                values = (await session.scalars(select(column))).all()
+                ordered = sorted(values, key=lambda value: (value.casefold(), value))
+                normalized: dict[str, str] = {}
+                for value in ordered:
+                    normalized.setdefault(value.casefold(), value)
+                result[field] = list(normalized.values())
+        return result
 
     async def by_ids(self, ids: Sequence[str]) -> dict[str, ExerciseOut]:
         if not ids:

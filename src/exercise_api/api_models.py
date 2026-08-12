@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+MAX_CHAT_MESSAGE_CHARS = 4000
+
 
 class ChatMessage(BaseModel):
     """Provider-neutral message sent to a chat-completions model."""
@@ -59,6 +61,19 @@ class RetrievalPlan(BaseModel):
     muscle_group: str | None = None
     target: str | None = None
     search_terms: list[str] = Field(default_factory=list)
+    uses_prior_context: bool = False
+    referenced_ids: list[str] = Field(default_factory=list)
+    medical_context: bool = False
+    experience_level: str | None = None
+    fitness_goal: str | None = None
+    duration_minutes: Annotated[int, Field(ge=1)] | None = None
+    training_volume: str | None = None
+    restrictions: str | None = None
+    experience_level_evidence: Annotated[str, Field(max_length=200)] | None = None
+    fitness_goal_evidence: Annotated[str, Field(max_length=200)] | None = None
+    duration_minutes_evidence: Annotated[str, Field(max_length=200)] | None = None
+    training_volume_evidence: Annotated[str, Field(max_length=200)] | None = None
+    restrictions_evidence: Annotated[str, Field(max_length=200)] | None = None
 
 
 class ChatRequest(BaseModel):
@@ -67,7 +82,7 @@ class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     session_id: UUID | None = None
-    message: str
+    message: Annotated[str, Field(max_length=MAX_CHAT_MESSAGE_CHARS)]
 
     @field_validator("message")
     @classmethod
@@ -177,3 +192,23 @@ class SessionOut(BaseModel):
     id: UUID
     created_at: datetime
     messages: list[MessageOut]
+
+
+class PriorExerciseContext(BaseModel):
+    """Catalog-revalidated subset of one previously returned exercise."""
+
+    order: Annotated[int, Field(ge=1)]
+    id: str
+    name: str
+    sets: Annotated[int, Field(ge=1)] | None = None
+    reps: str | None = None
+    rest_seconds: Annotated[int, Field(ge=0)] | None = None
+    notes: str | None = None
+
+
+class PriorTurnContext(BaseModel):
+    """Bounded structured assistant turn supplied to follow-up generation."""
+
+    message_position: Annotated[int, Field(ge=0)]
+    intent: Literal["exercise_search", "workout"]
+    exercises: list[PriorExerciseContext]

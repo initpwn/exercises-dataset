@@ -1,9 +1,10 @@
 """Durable conversation-session storage."""
 
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
@@ -15,20 +16,31 @@ class SessionNotFoundError(LookupError):
     """Raised when a conversation session does not exist."""
 
 
+class StoredSession(SessionOut):
+    """Internal session view including the persistence-only update timestamp."""
+
+    updated_at: datetime
+
+
 class SessionRepository:
     """Read and mutate persistent conversation sessions."""
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
 
-    async def create(self) -> SessionOut:
+    async def create(self) -> StoredSession:
         row = SessionRow(id=str(uuid4()), messages=[])
         async with self._session_factory() as database_session:
             database_session.add(row)
             await database_session.commit()
-        return SessionOut(id=UUID(row.id), created_at=row.created_at, messages=[])
+        return StoredSession(
+            id=UUID(row.id),
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            messages=[],
+        )
 
-    async def get(self, session_id: UUID) -> SessionOut | None:
+    async def get(self, session_id: UUID) -> StoredSession | None:
         statement = (
             select(SessionRow)
             .where(SessionRow.id == str(session_id))
@@ -38,7 +50,7 @@ class SessionRepository:
             row = await database_session.scalar(statement)
             if row is None:
                 return None
-            return SessionOut.model_validate(row)
+            return StoredSession.model_validate(row)
 
     async def recent_messages(self, session_id: UUID, limit: int) -> list[MessageOut]:
         if limit <= 0:
@@ -68,7 +80,10 @@ class SessionRepository:
             reserved_end = await database_session.scalar(
                 update(SessionRow)
                 .where(SessionRow.id == session_key)
-                .values(next_position=SessionRow.next_position + 2)
+                .values(
+                    next_position=SessionRow.next_position + 2,
+                    updated_at=datetime.now(UTC),
+                )
                 .returning(SessionRow.next_position)
             )
             if reserved_end is None:
@@ -94,10 +109,13 @@ class SessionRepository:
             )
 
     async def delete(self, session_id: UUID) -> bool:
-        async with self._session_factory() as database_session:
-            row = await database_session.get(SessionRow, str(session_id))
-            if row is None:
-                return False
-            await database_session.delete(row)
-            await database_session.commit()
-            return True
+        async with (
+            self._session_factory() as database_session,
+            database_session.begin(),
+        ):
+            deleted_id = await database_session.scalar(
+                delete(SessionRow)
+                .where(SessionRow.id == str(session_id))
+                .returning(SessionRow.id)
+            )
+            return deleted_id is not None

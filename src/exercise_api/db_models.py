@@ -13,6 +13,39 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
+
+
+class UTCDateTime(TypeDecorator[datetime]):
+    """Persist UTC datetimes and restore timezone awareness on every dialect."""
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(
+        self, value: datetime | None, dialect: object
+    ) -> datetime | None:
+        del dialect
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    def process_result_value(
+        self, value: datetime | None, dialect: object
+    ) -> datetime | None:
+        del dialect
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+
+def utc_now() -> datetime:
+    """Return one timezone-aware UTC timestamp for ORM defaults and updates."""
+    return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
@@ -35,9 +68,7 @@ class ExerciseRow(Base):
     image: Mapped[str] = mapped_column(String, nullable=False)
     gif_url: Mapped[str] = mapped_column(String, nullable=False)
     attribution: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
 
 
 class CatalogStateRow(Base):
@@ -52,7 +83,10 @@ class SessionRow(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+        UTCDateTime(), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=utc_now, onupdate=utc_now, nullable=False
     )
     next_position: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False
@@ -60,6 +94,7 @@ class SessionRow(Base):
     messages: Mapped[list["MessageRow"]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         order_by="MessageRow.position",
     )
 
@@ -78,7 +113,7 @@ class MessageRow(Base):
     text: Mapped[str] = mapped_column(String, nullable=False)
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+        UTCDateTime(), default=utc_now, nullable=False
     )
     session: Mapped[SessionRow] = relationship(back_populates="messages")
 

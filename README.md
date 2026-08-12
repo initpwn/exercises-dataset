@@ -136,6 +136,7 @@ base_url = "http://localhost:11434/v1"
 api_key = "ollama"
 model = "your-model"
 timeout_seconds = 60
+max_output_tokens = 2048
 
 [retrieval]
 candidate_limit = 30
@@ -152,7 +153,7 @@ To use PostgreSQL, change only the database URL:
 url = "postgresql+psycopg://exercise_user:password@localhost:5432/exercises"
 ```
 
-The service also accepts `postgresql://` and Testcontainers-style `postgresql+psycopg2://` URLs and normalizes them to the async psycopg driver. The database and role must already exist and be allowed to create and alter application tables.
+The service also accepts `postgresql://` and Testcontainers-style `postgresql+psycopg2://` URLs and normalizes them to the async psycopg driver. The database and role must already exist and be allowed to create and alter application tables. Schema creation and the legacy session-column upgrade are serialized across processes with a SQLite exclusive transaction or a PostgreSQL transaction-scoped advisory lock; every instance may run the same idempotent initializer during startup.
 
 Every setting can be overridden without editing the TOML file. Environment variable names use `EXERCISE_API__<SECTION>__<KEY>`:
 
@@ -168,7 +169,7 @@ Use environment variables or a secret manager for API keys and database credenti
 
 ### Direct catalog endpoints
 
-Direct catalog endpoints never invoke the LLM. Filters are case-insensitive literal substring matches, multiple filters use AND semantics, and list results are ordered by exercise ID.
+Direct catalog endpoints never invoke the LLM. Filters are trimmed case-insensitive literal substring matches, whitespace-only filters are absent, multiple filters use AND semantics, and list results are ordered by exercise ID.
 
 ```powershell
 curl.exe "http://127.0.0.1:8000/exercises?page=1&limit=10&category=chest&equipment=body%20weight"
@@ -183,6 +184,10 @@ curl.exe "http://127.0.0.1:8000/equipment"
 ### Chat and persistent sessions
 
 Omit `session_id` on the first chat request. The response includes a new session ID plus either renderable search `results` or a structured `workout`:
+
+The chat API accepts input text in any language so the planner can interpret it, but version 1 has no language option: catalog fields, prompts, and generated responses are English-only. A chat message is limited to 4,000 Unicode characters. Each provider call requests at most 2,048 output tokens by default (`llm.max_output_tokens`, configurable from 128 through 8,192). A malformed provider response is copied into the single repair prompt only as an 8,192-character excerpt, and its validation diagnostic is limited to 2,048 characters. Structured follow-up context is catalog-revalidated and bounded to the newest five assistant payloads, ten exercises per turn, and 8,192 serialized characters.
+
+Missing workout details are filled server-side with conservative defaults. Requests involving pain, injury, pregnancy, rehabilitation, or medical conditions receive a deterministic professional-guidance warning. Model text that claims medical safety or suitability is corrected once and rejected if it remains unsafe.
 
 ```powershell
 curl.exe -X POST "http://127.0.0.1:8000/v1/chat" `

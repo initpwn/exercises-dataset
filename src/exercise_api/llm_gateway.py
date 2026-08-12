@@ -1,6 +1,7 @@
 """OpenAI-compatible, provider-neutral structured-output gateway."""
 
 import json
+import logging
 import re
 from typing import TypeVar
 
@@ -12,6 +13,7 @@ from exercise_api.config import LLMSettings
 from exercise_api.prompts import json_repair_message
 
 T = TypeVar("T", bound=BaseModel)
+logger = logging.getLogger(__name__)
 
 
 class LLMUnavailableError(Exception):
@@ -80,11 +82,13 @@ class LLMGateway:
                     "model": self._settings.model,
                     "messages": [message.model_dump() for message in messages],
                     "temperature": 0,
+                    "max_tokens": self._settings.max_output_tokens,
                 },
             )
             response.raise_for_status()
             return response
-        except (httpx.RequestError, httpx.HTTPStatusError):
+        except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+            logger.warning("Model provider request failed (%s)", type(exc).__name__)
             raise LLMUnavailableError("Model service is unavailable") from None
 
     async def generate_json(
@@ -98,6 +102,7 @@ class LLMGateway:
             try:
                 return await self._generate_once(client, request_messages, output_type)
             except _InvalidStructuredResponse as invalid:
+                logger.warning("Model returned invalid structured output; repairing")
                 request_messages.append(
                     json_repair_message(
                         invalid.malformed_output, invalid.validation_error
@@ -107,7 +112,7 @@ class LLMGateway:
             try:
                 return await self._generate_once(client, request_messages, output_type)
             except _InvalidStructuredResponse:
-                pass
+                logger.warning("Model structured-output repair failed")
 
         raise LLMInvalidResponseError("Model returned invalid structured output")
 

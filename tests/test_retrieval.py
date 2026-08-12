@@ -65,6 +65,17 @@ async def retrieval(tmp_path: Path) -> AsyncIterator[RetrievalService]:
                     target="neutral",
                     instructions=["Perform the movement."],
                 ),
+                catalog_record(
+                    "0007",
+                    "body weight push up",
+                    equipment="body weight",
+                ),
+                catalog_record(
+                    "0008",
+                    "suspension chest press",
+                    category="strength",
+                    equipment="suspension trainer",
+                ),
             ],
         ),
     )
@@ -84,6 +95,55 @@ async def test_explicit_constraints_are_hard_filters(
     assert all(
         item.equipment == "dumbbell" and item.body_part == "chest" for item in results
     )
+
+
+@pytest.mark.parametrize(
+    ("plan_equipment", "query", "expected_equipment"),
+    [
+        ("dumbbells", "show me chest presses", "dumbbell"),
+        (None, "show me a bodyweight exercise", "body weight"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_catalog_aliases_normalize_plans_and_current_text(
+    retrieval: RetrievalService,
+    plan_equipment: str | None,
+    query: str,
+    expected_equipment: str,
+) -> None:
+    plan = RetrievalPlan(intent="exercise_search", equipment=plan_equipment)
+
+    results = await retrieval.retrieve(plan, query, candidate_limit=10)
+
+    assert results
+    assert all(item.equipment == expected_equipment for item in results)
+
+
+@pytest.mark.asyncio
+async def test_current_explicit_constraint_overrides_conflicting_planner_value(
+    retrieval: RetrievalService,
+) -> None:
+    plan = RetrievalPlan(intent="exercise_search", equipment="barbell")
+
+    results = await retrieval.retrieve(
+        plan, "show me exercises using dumbbells", candidate_limit=10
+    )
+
+    assert results
+    assert all(item.equipment == "dumbbell" for item in results)
+
+
+@pytest.mark.asyncio
+async def test_text_constraint_does_not_create_cross_field_hard_filters(
+    retrieval: RetrievalService,
+) -> None:
+    results = await retrieval.retrieve(
+        RetrievalPlan(intent="exercise_search"),
+        "show me chest exercises",
+        candidate_limit=10,
+    )
+
+    assert "0008" in [item.id for item in results]
 
 
 @pytest.mark.asyncio
@@ -127,6 +187,41 @@ async def test_no_results_does_not_loosen_explicit_constraints(
         candidate_limit=10,
     )
     assert results == []
+
+
+@pytest.mark.asyncio
+async def test_unrelated_request_fails_deterministic_relevance_floor(
+    retrieval: RetrievalService,
+) -> None:
+    results = await retrieval.retrieve(
+        RetrievalPlan(intent="exercise_search", search_terms=["zyxqv nonsense"]),
+        "zyxqv nonsense",
+        candidate_limit=10,
+    )
+
+    assert results == []
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "show me exercises",
+        "make me a workout",
+        "help me get fit",
+        "suggest something for general fitness",
+    ],
+)
+@pytest.mark.asyncio
+async def test_valid_broad_requests_bypass_lexical_relevance_floor(
+    retrieval: RetrievalService, query: str
+) -> None:
+    intent = "workout" if "workout" in query else "exercise_search"
+
+    results = await retrieval.retrieve(
+        RetrievalPlan(intent=intent), query, candidate_limit=3
+    )
+
+    assert [item.id for item in results] == ["0001", "0002", "0003"]
 
 
 @pytest.mark.asyncio

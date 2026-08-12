@@ -38,6 +38,14 @@ def test_repair_prompt_accepts_malformed_output_before_validation_error() -> Non
     assert message.content.endswith("not-json")
 
 
+def test_repair_prompt_bounds_malformed_output_and_validation_error() -> None:
+    message = json_repair_message("A" * 20_000, "B" * 10_000)
+
+    assert message.content.count("A") <= 8_192
+    assert message.content.count("B") <= 2_048
+    assert "[truncated]" in message.content
+
+
 @pytest.mark.asyncio
 async def test_request_uses_configured_openai_contract() -> None:
     transport = SequenceTransport([assistant('{"intent":"exercise_search"}')])
@@ -52,6 +60,7 @@ async def test_request_uses_configured_openai_contract() -> None:
         "model": "test-model",
         "messages": [{"role": "user", "content": "find curls"}],
         "temperature": 0,
+        "max_tokens": 2048,
     }
     assert request.extensions["timeout"] == {
         "connect": 1.0,
@@ -178,3 +187,18 @@ async def test_errors_never_include_api_key() -> None:
         await gateway.generate_json(messages(), RetrievalPlan)
 
     assert "test-secret" not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_logging_is_sanitized(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "provider-secret-body"
+    transport = SequenceTransport([httpx.Response(503, text=secret)])
+    gateway = LLMGateway(llm_settings(), transport=transport)
+
+    with caplog.at_level("WARNING"), pytest.raises(LLMUnavailableError):
+        await gateway.generate_json(messages(), RetrievalPlan)
+
+    assert "Model provider request failed" in caplog.text
+    assert secret not in caplog.text
