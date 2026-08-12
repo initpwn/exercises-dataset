@@ -12,6 +12,7 @@ Version 1 provides:
 
 - Exercise discovery from conversational English requests.
 - Workout generation from conversational English requests.
+- Direct, non-LLM exercise listing, filtering, random selection, and filter-value endpoints.
 - Renderable exercise metadata, instructions, images, and GIF paths.
 - Server-managed, persistent conversation sessions.
 - SQLite and PostgreSQL support selected through `config.toml`.
@@ -37,13 +38,13 @@ Creates session IDs and persists conversation messages through SQLAlchemy. The c
 
 ### Exercise catalog
 
-Loads and validates `data/exercises.json` during startup. It exposes English exercise records and catalog-derived vocabularies for body parts, targets, muscles, and equipment. The service is not ready if catalog validation fails.
+Loads and validates `data/exercises.json` during startup, then transactionally synchronizes the records into the configured database. It exposes English exercise records and catalog-derived vocabularies for body parts, targets, muscles, and equipment. The service is not ready if validation or synchronization fails.
 
-The JSON file remains the catalog's source of truth in version 1. Session storage does not duplicate exercise records.
+The JSON file remains the catalog's source of truth in version 1. A content hash prevents unnecessary synchronization. When the file changes, the catalog service upserts current records and removes database records no longer present in the file in one transaction. Exercises, sessions, and messages use separate tables.
 
 ### Retrieval service
 
-Accepts a user request and returns ranked catalog candidates. It detects explicit body-part, target-muscle, and equipment constraints using values derived from the catalog. Explicit constraints are hard filters. Remaining candidates are ranked using weighted matches across name, target, muscle fields, equipment, and English instructions.
+Accepts a user request and returns ranked catalog candidates from the exercises table. It detects explicit body-part, target-muscle, and equipment constraints using values derived from the catalog. Explicit constraints are hard filters. Remaining candidates are ranked using weighted matches across name, target, muscle fields, equipment, and English instructions.
 
 Retrieval exposes an internal interface so a semantic embedding implementation can be added without changing the public API.
 
@@ -106,6 +107,7 @@ Representative workout response:
       {
         "id": "1274",
         "name": "deep push up",
+        "category": "chest",
         "body_part": "chest",
         "target": "pectorals",
         "equipment": "dumbbell",
@@ -116,6 +118,9 @@ Representative workout response:
         ],
         "image": "images/1274-vptOQ4N.jpg",
         "gif_url": "videos/1274-vptOQ4N.gif",
+        "media_id": "vptOQ4N",
+        "attribution": "© Gym visual — https://gymvisual.com/",
+        "created_at": "2026-03-18T12:31:32.877433+00:00",
         "sets": 3,
         "reps": "8-12",
         "rest_seconds": 90,
@@ -129,6 +134,46 @@ Representative workout response:
 ```
 
 For `exercise_search`, `results` contains renderable catalog records and `workout` is `null`. For `workout`, `workout` is populated and `results` is empty. The exact response models will be defined as typed Pydantic schemas during implementation.
+
+### Direct exercise catalog
+
+These endpoints read the exercises table directly and never call the LLM provider. They remain usable when the LLM provider is unavailable.
+
+`GET /exercises` accepts these optional query parameters:
+
+- `page`: integer, default `1`, minimum `1`.
+- `limit`: integer, default `20`, minimum `1`, maximum `100`.
+- `category`: case-insensitive partial match.
+- `body_part`: case-insensitive partial match.
+- `equipment`: case-insensitive partial match.
+- `muscle_group`: case-insensitive partial match.
+- `target`: case-insensitive partial match.
+
+Multiple filters use AND semantics. Filter values are trimmed; an empty value is treated as absent. Each filter is a literal substring match, so SQL wildcard characters in user input are escaped. Results use ascending exercise ID order so pagination is stable across requests. A page beyond the available results returns an empty `data` array while preserving the matching `total`. `totalPages` is `ceil(total / limit)`, or `0` when no records match.
+
+Response:
+
+```json
+{
+  "data": [],
+  "total": 1324,
+  "page": 1,
+  "limit": 20,
+  "totalPages": 67
+}
+```
+
+Each object in `data` contains the catalog-owned renderable fields: `id`, `name`, `category`, `body_part`, `equipment`, `muscle_group`, `secondary_muscles`, `target`, English `instructions` as an ordered string array, `image`, `gif_url`, `media_id`, `attribution`, and `created_at`. Chat responses reuse this same exercise representation and add workout-only prescription fields when applicable.
+
+`GET /exercises/random` returns one complete exercise object selected from the exercises table. It returns `404` only if the catalog is empty.
+
+The remaining non-LLM endpoints return JSON arrays of sorted unique strings read from the exercises table:
+
+- `GET /categories` returns category values.
+- `GET /body-parts` returns body-part values.
+- `GET /equipment` returns equipment values.
+
+String sorting is case-insensitive and deterministic. Duplicate values that differ only by case collapse to one canonical catalog value.
 
 ### Session management
 
@@ -174,7 +219,7 @@ history_message_limit = 20
 
 Environment variables using the `EXERCISE_API__<SECTION>__<KEY>` convention override configuration values; for example, `EXERCISE_API__LLM__API_KEY` and `EXERCISE_API__DATABASE__URL`. Deployments should use these variables for the LLM API key and database credentials rather than committing secrets to `config.toml`.
 
-Startup validates required configuration, catalog availability, and database connectivity. When catalog or database initialization fails, the process remains available only to expose a `503` readiness response from `/health`; chat and session endpoints remain unavailable. LLM connectivity is checked when handling a chat request, not as a requirement for `/health` to report catalog and database state.
+Startup validates required configuration, catalog availability, database connectivity, and catalog synchronization. When any of these steps fail, the process remains available only to expose a `503` readiness response from `/health`; chat, session, and direct catalog endpoints remain unavailable. LLM connectivity is checked when handling a chat request. LLM failure does not make the database-backed direct catalog endpoints unavailable.
 
 ## Safe defaults and limitations
 
@@ -193,7 +238,9 @@ The catalog does not contain difficulty or contraindication fields. The API ther
 
 ## Persistence and transaction behavior
 
-Sessions and messages persist across server restarts. A session has a UUID, creation and update timestamps, and ordered messages. Each message stores its role, text, structured assistant payload when applicable, and timestamp.
+Exercises, catalog synchronization metadata, sessions, and messages persist across server restarts. The exercises table stores the English renderable catalog representation and indexed filter columns. JSON-compatible columns store secondary muscles and English instruction steps in both SQLite and PostgreSQL.
+
+A session has a UUID, creation and update timestamps, and ordered messages. Each message stores its role, text, structured assistant payload when applicable, and timestamp.
 
 The service records a completed exchange only after response validation succeeds. Failed or malformed assistant generations are not stored as successful assistant messages. Database operations use transactions so a partial exchange cannot be presented as completed history.
 
@@ -201,9 +248,9 @@ Deleting a session also deletes its messages.
 
 ## Failure handling
 
-- Catalog schema or startup validation failure keeps the application unready while allowing `/health` to report the failure.
+- Catalog schema, synchronization, or startup validation failure keeps the application unready while allowing `/health` to report the failure.
 - Database unavailability returns `503` for endpoints requiring persistence.
-- LLM connection failure or timeout returns `503`.
+- LLM connection failure or timeout returns `503` for chat requests without affecting direct catalog reads.
 - Malformed LLM output triggers one repair attempt, followed by `502` if still invalid.
 - Unknown model-selected IDs are discarded. If the remaining selection cannot satisfy the response, one corrected generation attempt is allowed.
 - No matching catalog records produces a successful empty response with a warning.
@@ -216,6 +263,8 @@ Deleting a session also deletes its messages.
 - Catalog loading and schema validation.
 - Vocabulary construction and constraint detection.
 - Hard filtering and weighted ranking.
+- Pagination calculations, stable ordering, partial-match filters, and combined-filter semantics.
+- Unique category, body-part, and equipment normalization and sorting.
 - LLM JSON extraction, validation, and repair behavior.
 - Unknown exercise ID rejection and catalog hydration.
 - Conservative defaults and warning rules.
@@ -224,6 +273,12 @@ Deleting a session also deletes its messages.
 ### Integration tests
 
 - Exercise-search and workout-generation request flows.
+- Direct exercise listing with default and boundary pagination.
+- Every direct filter individually and in combination.
+- Random exercise retrieval and empty-catalog behavior.
+- Category, body-part, and equipment value endpoints.
+- Direct catalog availability while the mock LLM provider is unavailable.
+- Catalog synchronization after the JSON source changes, including deleted records.
 - New session creation and existing session continuation.
 - Session history persistence across application restart.
 - Session retrieval and deletion.
@@ -239,6 +294,9 @@ Separate opt-in scripts verify one Ollama configuration and one cloud OpenAI-com
 ## Acceptance criteria
 
 - A client can submit an English conversational query without a session ID and receive a new session ID, conversational answer, and structured response.
+- A client can page and filter `/exercises` without invoking the LLM, using the specified response envelope and limits.
+- `/exercises/random` returns one complete catalog record.
+- `/categories`, `/body-parts`, and `/equipment` return sorted unique database values.
 - The same session ID continues the conversation after a server restart.
 - The same application code works with SQLite or PostgreSQL through configuration.
 - The same LLM gateway works with configured OpenAI-compatible local or cloud endpoints.
