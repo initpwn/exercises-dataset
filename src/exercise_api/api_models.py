@@ -7,6 +7,13 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class ChatMessage(BaseModel):
+    """Provider-neutral message sent to a chat-completions model."""
+
+    role: Literal["system", "user", "assistant"]
+    content: str
+
+
 class ExerciseOut(BaseModel):
     """Public representation of one catalog-owned exercise."""
 
