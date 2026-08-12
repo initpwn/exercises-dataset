@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from exercise_api.catalog import (
     CatalogValidationError,
@@ -12,7 +13,7 @@ from exercise_api.catalog import (
     sync_catalog,
 )
 from exercise_api.database import Database, async_database_url
-from exercise_api.db_models import ExerciseRow
+from exercise_api.db_models import CatalogStateRow, ExerciseRow
 from tests.factories import catalog_record
 
 
@@ -63,7 +64,9 @@ async def test_sync_inserts_updates_and_deletes_records(tmp_path: Path) -> None:
     )
     assert await sync_catalog(database.session_factory, changed) is True
     async with database.session_factory() as session:
-        rows = (await session.scalars(select(ExerciseRow).order_by(ExerciseRow.id))).all()
+        rows = (
+            await session.scalars(select(ExerciseRow).order_by(ExerciseRow.id))
+        ).all()
     assert [(row.id, row.name) for row in rows] == [
         ("0001", "Strict curl"),
         ("0003", "Row"),
@@ -73,7 +76,48 @@ async def test_sync_inserts_updates_and_deletes_records(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_initial_sync_serializes_on_catalog_state(tmp_path: Path) -> None:
+async def test_sync_rolls_back_all_catalog_changes_when_commit_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'rollback.db'}")
+    await database.create_schema()
+    original = LoadedCatalog(
+        "hash-1", [catalog_record("0001", "Curl"), catalog_record("0002", "Squat")]
+    )
+    await sync_catalog(database.session_factory, original)
+
+    async def fail_after_flush(session: AsyncSession) -> None:
+        await session.flush()
+        raise RuntimeError("injected commit failure")
+
+    monkeypatch.setattr(AsyncSession, "commit", fail_after_flush)
+    changed = LoadedCatalog(
+        "hash-2",
+        [catalog_record("0001", "Strict curl"), catalog_record("0003", "Row")],
+    )
+
+    with pytest.raises(RuntimeError, match="injected commit failure"):
+        await sync_catalog(database.session_factory, changed)
+
+    async with database.session_factory() as session:
+        rows = (
+            await session.scalars(select(ExerciseRow).order_by(ExerciseRow.id))
+        ).all()
+        state = await session.get(CatalogStateRow, "exercise-catalog")
+    assert [(row.id, row.name) for row in rows] == [
+        ("0001", "Curl"),
+        ("0002", "Squat"),
+    ]
+    assert state is not None
+    assert state.content_hash == "hash-1"
+    await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_initial_sync_serializes_on_catalog_state(
+    tmp_path: Path,
+) -> None:
     database = Database(f"sqlite+aiosqlite:///{tmp_path / 'concurrent.db'}")
     await database.create_schema()
     catalog = LoadedCatalog(

@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 from exercise_api.catalog import LoadedCatalog, sync_catalog
 from exercise_api.config import DatabaseSettings, Settings
 from exercise_api.database import Database
+from exercise_api.exercise_repository import ExerciseRepository
 from exercise_api.main import create_app
 from tests.factories import catalog_record
 
@@ -38,6 +39,42 @@ async def test_direct_value_and_random_endpoints(client: AsyncClient) -> None:
     random_response = await client.get("/exercises/random")
     assert random_response.status_code == 200
     assert random_response.json()["id"] in {"0001", "0002", "0003"}
+
+
+@pytest.mark.asyncio
+async def test_repository_by_ids_returns_only_requested_catalog_rows(
+    database: Database,
+) -> None:
+    repository = ExerciseRepository(database.session_factory)
+
+    exercises = await repository.by_ids(["0003", "missing", "0001", "0003"])
+
+    assert list(exercises) == ["0001", "0003"]
+    assert exercises["0001"].name == "Dumbbell bench press"
+    assert exercises["0003"].name == "Chin up"
+    assert await repository.by_ids([]) == {}
+
+
+@pytest.mark.asyncio
+async def test_repository_distinct_deduplicates_case_variants(
+    database: Database,
+) -> None:
+    await sync_catalog(
+        database.session_factory,
+        LoadedCatalog(
+            "case-variant-fixture",
+            [
+                catalog_record("0001", "First", category="chest"),
+                catalog_record("0002", "Second", category="Chest"),
+                catalog_record("0003", "Third", category="upper arms"),
+            ],
+        ),
+    )
+    repository = ExerciseRepository(database.session_factory)
+
+    categories = await repository.distinct("category")
+
+    assert [category.casefold() for category in categories] == ["chest", "upper arms"]
 
 
 @pytest.mark.parametrize(

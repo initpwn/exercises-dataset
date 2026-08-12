@@ -7,10 +7,12 @@ from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.orm import Session as SyncSession
 
 from exercise_api.config import DatabaseSettings, Settings
 from exercise_api.database import Database
+from exercise_api.db_models import MessageRow, SessionRow
 from exercise_api.main import create_app
 from exercise_api.session_repository import SessionRepository
 
@@ -111,6 +113,43 @@ async def test_concurrent_appends_reserve_unique_ordered_positions(
         ["user 1", "assistant 1", "user 2", "assistant 2"],
         ["user 2", "assistant 2", "user 1", "assistant 1"],
     )
+    await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_append_exchange_rolls_back_both_messages_when_flush_fails(
+    tmp_path: Path,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'rollback.db'}")
+    await database.create_schema()
+    repository = SessionRepository(database.session_factory)
+    created = await repository.create()
+
+    def fail_on_assistant_message(
+        session: SyncSession, flush_context: object, instances: object
+    ) -> None:
+        if any(
+            isinstance(row, MessageRow) and row.role == "assistant"
+            for row in session.new
+        ):
+            raise RuntimeError("injected assistant-message flush failure")
+
+    event.listen(SyncSession, "before_flush", fail_on_assistant_message)
+    try:
+        with pytest.raises(RuntimeError, match="injected assistant-message"):
+            await repository.append_exchange(
+                created.id, "user message", "assistant message", None
+            )
+    finally:
+        event.remove(SyncSession, "before_flush", fail_on_assistant_message)
+
+    loaded = await repository.get(created.id)
+    assert loaded is not None
+    assert loaded.messages == []
+    async with database.session_factory() as session:
+        row = await session.get(SessionRow, str(created.id))
+    assert row is not None
+    assert row.next_position == 0
     await database.dispose()
 
 

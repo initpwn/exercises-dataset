@@ -35,7 +35,9 @@ class ExerciseRow(Base):
     image: Mapped[str] = mapped_column(String, nullable=False)
     gif_url: Mapped[str] = mapped_column(String, nullable=False)
     attribution: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class CatalogStateRow(Base):
@@ -83,8 +85,6 @@ class MessageRow(Base):
     __table_args__ = (
         CheckConstraint("role IN ('user', 'assistant')", name="valid_message_role"),
         # Positions are stable ordering keys within a conversation.
-        UniqueConstraint(
-            "session_id", "position", name="uq_message_session_position"
-        ),
+        UniqueConstraint("session_id", "position", name="uq_message_session_position"),
         {"sqlite_autoincrement": True},
     )

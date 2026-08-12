@@ -19,12 +19,12 @@ async def create_session(
     return await repository.create()
 
 
-@router.get("/{session_id}", response_model=SessionOut)
+@router.get("/{id}", response_model=SessionOut)
 async def get_session(
-    session_id: UUID,
+    id: UUID,
     repository: Annotated[SessionRepository, Depends(get_session_repository)],
 ) -> SessionOut:
-    session = await repository.get(session_id)
+    session = await repository.get(id)
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
@@ -32,12 +32,12 @@ async def get_session(
     return session
 
 
-@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(
-    session_id: UUID,
+    id: UUID,
     repository: Annotated[SessionRepository, Depends(get_session_repository)],
 ) -> Response:
-    if not await repository.delete(session_id):
+    if not await repository.delete(id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
         )

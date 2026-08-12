@@ -18,9 +18,7 @@ class SessionNotFoundError(LookupError):
 class SessionRepository:
     """Read and mutate persistent conversation sessions."""
 
-    def __init__(
-        self, session_factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def create(self) -> SessionOut:
@@ -42,9 +40,7 @@ class SessionRepository:
                 return None
             return SessionOut.model_validate(row)
 
-    async def recent_messages(
-        self, session_id: UUID, limit: int
-    ) -> list[MessageOut]:
+    async def recent_messages(self, session_id: UUID, limit: int) -> list[MessageOut]:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
         statement = (

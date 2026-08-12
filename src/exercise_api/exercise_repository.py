@@ -39,9 +39,7 @@ def _literal_contains(value: str) -> str:
 class ExerciseRepository:
     """Read-only access to exercise catalog rows."""
 
-    def __init__(
-        self, session_factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def list(self, filters: ExerciseFilters) -> ExercisePage:
@@ -56,9 +54,7 @@ class ExerciseRepository:
             value = getattr(filters, field)
             if value is not None:
                 column = getattr(ExerciseRow, field)
-                conditions.append(
-                    column.ilike(_literal_contains(value), escape="\\")
-                )
+                conditions.append(column.ilike(_literal_contains(value), escape="\\"))
 
         async with self._session_factory() as session:
             total = await session.scalar(

@@ -83,7 +83,12 @@ def load_catalog(data_path: Path, schema_path: Path) -> LoadedCatalog:
             )
             for item in source
         ]
-    except (json.JSONDecodeError, SchemaError, ValidationError, PydanticValidationError) as error:
+    except (
+        json.JSONDecodeError,
+        SchemaError,
+        ValidationError,
+        PydanticValidationError,
+    ) as error:
         raise CatalogValidationError(str(error)) from error
 
     return LoadedCatalog(hashlib.sha256(raw_bytes).hexdigest(), records)
@@ -129,7 +134,8 @@ async def sync_catalog(
                 return False
 
             existing = {
-                row.id: row for row in (await session.scalars(select(ExerciseRow))).all()
+                row.id: row
+                for row in (await session.scalars(select(ExerciseRow))).all()
             }
             current_ids: set[str] = set()
             for record in catalog.records:

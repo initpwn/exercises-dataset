@@ -23,9 +23,7 @@ async def retrieval(tmp_path: Path) -> AsyncIterator[RetrievalService]:
             "retrieval-fixture",
             [
                 catalog_record("0001", "dumbbell chest press"),
-                catalog_record(
-                    "0002", "barbell chest press", equipment="barbell"
-                ),
+                catalog_record("0002", "barbell chest press", equipment="barbell"),
                 catalog_record(
                     "0003",
                     "dumbbell biceps curl",
@@ -84,8 +82,7 @@ async def test_explicit_constraints_are_hard_filters(
     results = await retrieval.retrieve(plan, "press for my chest", candidate_limit=10)
     assert results
     assert all(
-        item.equipment == "dumbbell" and item.body_part == "chest"
-        for item in results
+        item.equipment == "dumbbell" and item.body_part == "chest" for item in results
     )
 
 

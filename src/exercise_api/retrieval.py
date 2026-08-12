@@ -47,11 +47,7 @@ class RetrievalService:
                 target=plan.target,
             )
         )
-        needles = [
-            term.strip()
-            for term in [query, *plan.search_terms]
-            if term.strip()
-        ]
+        needles = [term.strip() for term in [query, *plan.search_terms] if term.strip()]
         ranked: list[ExerciseOut] = sorted(
             candidates, key=lambda item: (-_score(item, needles), item.id)
         )

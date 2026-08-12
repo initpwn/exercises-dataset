@@ -156,6 +156,18 @@ async def test_timeout_maps_to_unavailable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_connection_error_maps_to_unavailable() -> None:
+    request = httpx.Request("POST", "http://llm.test/v1/chat/completions")
+    transport = SequenceTransport(
+        [httpx.ConnectError("connection refused", request=request)]
+    )
+    gateway = LLMGateway(llm_settings(), transport=transport)
+
+    with pytest.raises(LLMUnavailableError):
+        await gateway.generate_json(messages(), RetrievalPlan)
+
+
+@pytest.mark.asyncio
 async def test_errors_never_include_api_key() -> None:
     transport = SequenceTransport(
         [httpx.Response(503, text="provider rejected test-secret")]
