@@ -124,6 +124,28 @@ async def test_request_can_use_lm_studio_native_chat_contract() -> None:
 
 
 @pytest.mark.asyncio
+async def test_lm_studio_ignores_reasoning_output_before_json_message() -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "model_instance_id": "test-model",
+            "output": [
+                {"type": "reasoning", "content": "I should classify this."},
+                {
+                    "type": "message",
+                    "content": 'Here is the result: {"intent":"exercise_search"}',
+                },
+            ],
+        },
+    )
+    gateway = LLMGateway(lm_studio_settings(), transport=SequenceTransport([response]))
+
+    result = await gateway.generate_json(messages(), RetrievalPlan)
+
+    assert result.intent == "exercise_search"
+
+
+@pytest.mark.asyncio
 async def test_completion_returns_only_provider_metadata_and_content() -> None:
     response = httpx.Response(
         200,

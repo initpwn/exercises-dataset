@@ -168,7 +168,18 @@ def _extract_json(content: str) -> str:
     fenced = re.fullmatch(
         r"\s*```(?:json)?\s*(.*?)\s*```\s*", content, flags=re.IGNORECASE | re.DOTALL
     )
-    return fenced.group(1) if fenced else content
+    if fenced:
+        return fenced.group(1)
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(content):
+        if character not in "[{":
+            continue
+        try:
+            _, end = decoder.raw_decode(content[index:])
+        except json.JSONDecodeError:
+            continue
+        return content[index : index + end]
+    return content
 
 
 def _completion_fields(
@@ -179,11 +190,14 @@ def _completion_fields(
     if api_format == "lmstudio":
         output = payload.get("output")
         if isinstance(output, list):
-            content = "\n".join(
+            messages = [
                 item["content"]
                 for item in output
-                if isinstance(item, dict) and isinstance(item.get("content"), str)
-            )
+                if isinstance(item, dict)
+                and item.get("type") == "message"
+                and isinstance(item.get("content"), str)
+            ]
+            content = messages[-1] if messages else ""
         elif isinstance(output, str):
             content = output
         else:
