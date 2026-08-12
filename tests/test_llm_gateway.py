@@ -189,6 +189,40 @@ async def test_planner_wrapper_shape_is_normalized() -> None:
 
 
 @pytest.mark.asyncio
+async def test_planner_workout_details_alias_is_normalized() -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "model_instance_id": "test-model",
+            "output": [
+                {
+                    "type": "message",
+                    "content": json.dumps(
+                        {
+                            "intent": "workout",
+                            "body_part": "chest",
+                            "workout_details": {
+                                "experience_level": None,
+                                "fitness_goal": None,
+                                "duration_minutes": None,
+                                "training_volume": None,
+                                "restrictions": None,
+                            },
+                        }
+                    ),
+                }
+            ],
+        },
+    )
+    gateway = LLMGateway(lm_studio_settings(), transport=SequenceTransport([response]))
+
+    result = await gateway.generate_json(messages(), RetrievalPlan)
+
+    assert result.intent == "workout"
+    assert result.body_part == "chest"
+
+
+@pytest.mark.asyncio
 async def test_planner_scalar_filters_and_null_medical_flag_are_normalized() -> None:
     response = httpx.Response(
         200,

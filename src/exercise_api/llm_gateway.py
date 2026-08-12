@@ -220,6 +220,9 @@ def _normalize_structured_payload(payload: object, output_type: type[T]) -> obje
         if isinstance(preferences, dict):
             normalized.update(preferences)
     if output_type is RetrievalPlan:
+        workout_details = normalized.pop("workout_details", None)
+        if isinstance(workout_details, dict):
+            normalized.update(workout_details)
         for key in ("category", "body_part", "equipment", "muscle_group", "target"):
             value = normalized.get(key)
             if isinstance(value, list) and len(value) == 1:
