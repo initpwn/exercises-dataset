@@ -121,7 +121,9 @@ Review `config.toml`, then start the development server:
 rtk uvicorn exercise_api.main:app --reload
 ```
 
-Startup creates the database schema, validates `data/exercises.json`, and synchronizes it into the database. Check readiness at `http://127.0.0.1:8000/health` and browse the generated OpenAPI client at `http://127.0.0.1:8000/docs`. `/health` does not contact the model provider.
+Startup creates the database schema, validates `data/exercises.json`, and synchronizes it into the database. Check readiness at `http://127.0.0.1:8000/health`, browse the generated OpenAPI client at `http://127.0.0.1:8000/docs`, or use the bundled API web UI at `http://127.0.0.1:8000/app`. `/health` does not contact the model provider.
+
+The `/app` UI is a plain browser client for the REST API. It stores the API base URL, filters, pagination, chat session ID, and local chat transcript in `localStorage`; catalog and chat data still come from the server over HTTP.
 
 ### Configure SQLite or PostgreSQL
 

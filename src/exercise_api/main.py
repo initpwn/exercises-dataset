@@ -6,7 +6,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import (
     DBAPIError,
     DisconnectionError,
@@ -157,6 +158,15 @@ def create_app(
     app.include_router(chat_router, dependencies=readiness_dependencies)
     app.include_router(exercise_router, dependencies=readiness_dependencies)
     app.include_router(session_router, dependencies=readiness_dependencies)
+
+    @app.get("/app", include_in_schema=False)
+    async def web_ui() -> FileResponse:
+        return FileResponse(Path("app.html"))
+
+    for route, directory in (("/images", "images"), ("/videos", "videos")):
+        if Path(directory).is_dir():
+            app.mount(route, StaticFiles(directory=directory), name=directory)
+
     return app
 
 
