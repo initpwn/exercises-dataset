@@ -2,12 +2,22 @@
 
 from typing import Annotated, cast
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request, status
 
 from exercise_api.chat_service import ChatService, StructuredLLM
 from exercise_api.exercise_repository import ExerciseRepository
 from exercise_api.retrieval import RetrievalService
 from exercise_api.session_repository import SessionRepository
+
+
+def require_ready(request: Request) -> None:
+    """Reject persistence-backed requests until startup initialization succeeds."""
+    readiness = request.app.state.readiness
+    if readiness["database"] != "ready" or readiness["catalog"] != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Application is not ready",
+        )
 
 
 def get_exercise_repository(request: Request) -> ExerciseRepository:
