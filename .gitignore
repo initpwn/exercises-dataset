@@ -8,3 +8,7 @@ __pycache__/
 .claude/
 .worktrees/
 .superpowers/
+exercise_api.db
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

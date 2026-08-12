@@ -1,0 +1,15 @@
+[database]
+url = "sqlite:///./exercise_api.db"
+
+[llm]
+base_url = "http://localhost:11434/v1"
+api_key = "ollama"
+model = "your-model"
+timeout_seconds = 60
+
+[retrieval]
+candidate_limit = 30
+result_limit = 10
+
+[sessions]
+history_message_limit = 20
