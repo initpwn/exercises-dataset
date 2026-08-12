@@ -1,6 +1,8 @@
 """Public response models for exercise catalog endpoints."""
 
 from datetime import datetime
+from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -36,3 +38,25 @@ class ExercisePage(BaseModel):
     limit: int
     total: int
     total_pages: int = Field(serialization_alias="totalPages")
+
+
+class MessageOut(BaseModel):
+    """One ordered user or assistant message in a conversation."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    position: int
+    role: Literal["user", "assistant"]
+    text: str
+    payload: dict[str, Any] | None
+    created_at: datetime
+
+
+class SessionOut(BaseModel):
+    """A durable conversation and its complete ordered message history."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    created_at: datetime
+    messages: list[MessageOut]

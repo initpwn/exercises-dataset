@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from exercise_api.config import Settings
 from exercise_api.database import Database
 from exercise_api.routes.exercises import router as exercise_router
+from exercise_api.routes.sessions import router as session_router
 
 
 def create_app(settings: Settings, lifespan_enabled: bool = True) -> FastAPI:
@@ -26,4 +27,5 @@ def create_app(settings: Settings, lifespan_enabled: bool = True) -> FastAPI:
     app.state.database = database
     app.state.settings = settings
     app.include_router(exercise_router)
+    app.include_router(session_router)
     return app
