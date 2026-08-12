@@ -301,6 +301,41 @@ async def test_nested_workout_wrapper_is_normalized() -> None:
 
 
 @pytest.mark.asyncio
+async def test_missing_workout_answer_uses_name_fallback() -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "model_instance_id": "test-model",
+            "output": [
+                {
+                    "type": "message",
+                    "content": json.dumps(
+                        {
+                            "intent": "workout",
+                            "name": "Barbell Chest Workout",
+                            "estimated_duration_minutes": 30,
+                            "selections": [
+                                {
+                                    "id": "0001",
+                                    "sets": 3,
+                                    "reps": "8-12",
+                                    "rest_seconds": 60,
+                                }
+                            ],
+                        }
+                    ),
+                }
+            ],
+        },
+    )
+    gateway = LLMGateway(lm_studio_settings(), transport=SequenceTransport([response]))
+
+    result = await gateway.generate_json(messages(), WorkoutDecision)
+
+    assert result.answer == "Barbell Chest Workout"
+
+
+@pytest.mark.asyncio
 async def test_completion_returns_only_provider_metadata_and_content() -> None:
     response = httpx.Response(
         200,

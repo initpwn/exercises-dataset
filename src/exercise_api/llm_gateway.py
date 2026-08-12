@@ -232,6 +232,8 @@ def _normalize_structured_payload(payload: object, output_type: type[T]) -> obje
                 if isinstance(normalized.get(alias), str):
                     normalized["answer"] = normalized.pop(alias)
                     break
+        if "answer" not in normalized and isinstance(normalized.get("name"), str):
+            normalized["answer"] = normalized["name"]
         assumptions = normalized.get("assumptions")
         if isinstance(assumptions, dict):
             normalized["assumptions"] = [
