@@ -193,20 +193,26 @@ def _normalize_structured_payload(payload: object, output_type: type[T]) -> obje
     """Flatten the common semantic wrapper emitted by smaller planner models."""
     if output_type is not RetrievalPlan or not isinstance(payload, dict):
         return payload
-    if "intent" in payload or "classification" not in payload:
-        return payload
-    constraints = payload.get("constraints")
-    preferences = payload.get("workout_preferences")
-    normalized = {
-        key: value
-        for key, value in payload.items()
-        if key not in {"classification", "constraints", "workout_preferences"}
-    }
-    normalized["intent"] = payload["classification"]
-    if isinstance(constraints, dict):
-        normalized.update(constraints)
-    if isinstance(preferences, dict):
-        normalized.update(preferences)
+    normalized = dict(payload)
+    if "intent" not in payload and "classification" in payload:
+        constraints = payload.get("constraints")
+        preferences = payload.get("workout_preferences")
+        normalized = {
+            key: value
+            for key, value in payload.items()
+            if key not in {"classification", "constraints", "workout_preferences"}
+        }
+        normalized["intent"] = payload["classification"]
+        if isinstance(constraints, dict):
+            normalized.update(constraints)
+        if isinstance(preferences, dict):
+            normalized.update(preferences)
+    for key in ("category", "body_part", "equipment", "muscle_group", "target"):
+        value = normalized.get(key)
+        if isinstance(value, list) and len(value) == 1:
+            normalized[key] = value[0]
+    if normalized.get("medical_context") is None:
+        normalized["medical_context"] = False
     return normalized
 
 

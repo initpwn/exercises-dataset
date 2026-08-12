@@ -189,6 +189,40 @@ async def test_planner_wrapper_shape_is_normalized() -> None:
 
 
 @pytest.mark.asyncio
+async def test_planner_scalar_filters_and_null_medical_flag_are_normalized() -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "model_instance_id": "test-model",
+            "output": [
+                {
+                    "type": "message",
+                    "content": json.dumps(
+                        {
+                            "intent": "exercise_search",
+                            "body_part": ["chest"],
+                            "equipment": ["barbell"],
+                            "muscle_group": ["chest"],
+                            "target": ["pectorals"],
+                            "medical_context": None,
+                        }
+                    ),
+                }
+            ],
+        },
+    )
+    gateway = LLMGateway(lm_studio_settings(), transport=SequenceTransport([response]))
+
+    result = await gateway.generate_json(messages(), RetrievalPlan)
+
+    assert result.body_part == "chest"
+    assert result.equipment == "barbell"
+    assert result.muscle_group == "chest"
+    assert result.target == "pectorals"
+    assert result.medical_context is False
+
+
+@pytest.mark.asyncio
 async def test_completion_returns_only_provider_metadata_and_content() -> None:
     response = httpx.Response(
         200,
