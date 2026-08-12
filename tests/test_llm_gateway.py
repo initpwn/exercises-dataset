@@ -7,7 +7,7 @@ import httpx
 import pytest
 from pydantic import BaseModel, model_validator
 
-from exercise_api.api_models import ChatMessage, RetrievalPlan
+from exercise_api.api_models import ChatMessage, RetrievalPlan, WorkoutDecision
 from exercise_api.config import LLMSettings
 from exercise_api.llm_gateway import (
     LLMGateway,
@@ -220,6 +220,46 @@ async def test_planner_scalar_filters_and_null_medical_flag_are_normalized() -> 
     assert result.muscle_group == "chest"
     assert result.target == "pectorals"
     assert result.medical_context is False
+
+
+@pytest.mark.asyncio
+async def test_workout_presentation_fields_are_normalized() -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "model_instance_id": "test-model",
+            "output": [
+                {
+                    "type": "message",
+                    "content": json.dumps(
+                        {
+                            "intent": "workout",
+                            "name": "Barbell Chest Workout",
+                            "estimated_duration_minutes": 30,
+                            "selections": [
+                                {
+                                    "id": "0001",
+                                    "sets": 3,
+                                    "reps": "8-12",
+                                    "rest_seconds": 60,
+                                }
+                            ],
+                            "description": "A focused chest workout.",
+                            "assumptions": {"experience_level": "beginner"},
+                            "warnings": "Stop if pain occurs.",
+                        }
+                    ),
+                }
+            ],
+        },
+    )
+    gateway = LLMGateway(lm_studio_settings(), transport=SequenceTransport([response]))
+
+    result = await gateway.generate_json(messages(), WorkoutDecision)
+
+    assert result.answer == "A focused chest workout."
+    assert result.assumptions == ["experience_level: beginner"]
+    assert result.warnings == ["Stop if pain occurs."]
 
 
 @pytest.mark.asyncio

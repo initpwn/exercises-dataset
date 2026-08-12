@@ -8,7 +8,12 @@ from typing import TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from exercise_api.api_models import ChatMessage, RetrievalPlan
+from exercise_api.api_models import (
+    ChatMessage,
+    ExerciseSearchDecision,
+    RetrievalPlan,
+    WorkoutDecision,
+)
 from exercise_api.config import LLMSettings
 from exercise_api.prompts import json_repair_message
 
@@ -191,10 +196,14 @@ def _extract_json(content: str) -> str:
 
 def _normalize_structured_payload(payload: object, output_type: type[T]) -> object:
     """Flatten the common semantic wrapper emitted by smaller planner models."""
-    if output_type is not RetrievalPlan or not isinstance(payload, dict):
+    if not isinstance(payload, dict):
         return payload
     normalized = dict(payload)
-    if "intent" not in payload and "classification" in payload:
+    if (
+        output_type is RetrievalPlan
+        and "intent" not in payload
+        and "classification" in payload
+    ):
         constraints = payload.get("constraints")
         preferences = payload.get("workout_preferences")
         normalized = {
@@ -207,12 +216,29 @@ def _normalize_structured_payload(payload: object, output_type: type[T]) -> obje
             normalized.update(constraints)
         if isinstance(preferences, dict):
             normalized.update(preferences)
-    for key in ("category", "body_part", "equipment", "muscle_group", "target"):
-        value = normalized.get(key)
-        if isinstance(value, list) and len(value) == 1:
-            normalized[key] = value[0]
-    if normalized.get("medical_context") is None:
-        normalized["medical_context"] = False
+    if output_type is RetrievalPlan:
+        for key in ("category", "body_part", "equipment", "muscle_group", "target"):
+            value = normalized.get(key)
+            if isinstance(value, list) and len(value) == 1:
+                normalized[key] = value[0]
+        if normalized.get("medical_context") is None:
+            normalized["medical_context"] = False
+    if output_type in (ExerciseSearchDecision, WorkoutDecision):
+        if "answer" not in normalized:
+            for alias in ("description", "response", "message", "summary"):
+                if isinstance(normalized.get(alias), str):
+                    normalized["answer"] = normalized.pop(alias)
+                    break
+        assumptions = normalized.get("assumptions")
+        if isinstance(assumptions, dict):
+            normalized["assumptions"] = [
+                f"{key}: {value}" for key, value in assumptions.items()
+            ]
+        elif isinstance(assumptions, str):
+            normalized["assumptions"] = [assumptions]
+        warnings = normalized.get("warnings")
+        if isinstance(warnings, str):
+            normalized["warnings"] = [warnings]
     return normalized
 
 
