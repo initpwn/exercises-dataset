@@ -1,6 +1,7 @@
 """Executable contract tests for the opt-in live-provider smoke command."""
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -8,6 +9,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+import pytest
 
 
 class _ProviderHandler(BaseHTTPRequestHandler):
@@ -65,8 +68,21 @@ def _write_config(path: Path, base_url: str) -> None:
     )
 
 
-def test_smoke_command_prints_only_completion_fields(tmp_path: Path) -> None:
+def _smoke_subprocess_environment() -> dict[str, str]:
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if not name.upper().startswith("EXERCISE_API__")
+    }
+
+
+def test_smoke_command_ignores_inherited_exercise_api_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = tmp_path / "config.toml"
+    monkeypatch.setenv(
+        "EXERCISE_API__LLM__BASE_URL", "http://127.0.0.1:1/hostile-provider"
+    )
     with _provider_url() as base_url:
         _write_config(config, base_url)
         result = subprocess.run(
@@ -80,6 +96,7 @@ def test_smoke_command_prints_only_completion_fields(tmp_path: Path) -> None:
             ],
             capture_output=True,
             check=False,
+            env=_smoke_subprocess_environment(),
             text=True,
         )
 
@@ -108,6 +125,7 @@ def test_smoke_command_fails_without_disclosing_api_key(tmp_path: Path) -> None:
         ],
         capture_output=True,
         check=False,
+        env=_smoke_subprocess_environment(),
         text=True,
     )
 

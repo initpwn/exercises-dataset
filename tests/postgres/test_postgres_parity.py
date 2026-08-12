@@ -32,9 +32,7 @@ async def test_postgres_catalog_filters_and_session_restart() -> None:
         assert sorted(sync_results) == [False, True]
 
         exercises = ExerciseRepository(database.session_factory)
-        page = await exercises.list(
-            ExerciseFilters(equipment="DUMB", page=1, limit=20)
-        )
+        page = await exercises.list(ExerciseFilters(equipment="DUMB", page=1, limit=20))
         assert page.total == 2
         assert [exercise.name for exercise in page.data] == ["Press", "Fly"]
 
@@ -154,9 +152,7 @@ async def test_postgres_schema_upgrade_initializes_session_counter() -> None:
         await database.create_schema()
         await database.create_schema()
         sessions = SessionRepository(database.session_factory)
-        loaded = await sessions.get(
-            UUID("00000000-0000-0000-0000-000000000001")
-        )
+        loaded = await sessions.get(UUID("00000000-0000-0000-0000-000000000001"))
         assert loaded is not None
         await sessions.append_exchange(
             loaded.id, "new user", "new assistant", {"intent": "workout"}

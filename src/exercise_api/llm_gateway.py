@@ -19,7 +19,7 @@ class LLMUnavailableError(Exception):
 
 
 class LLMInvalidResponseError(Exception):
-    """Raised when the model twice returns invalid structured output."""
+    """Raised when the model returns an invalid ordinary or structured response."""
 
 
 class LLMCompletion(BaseModel):

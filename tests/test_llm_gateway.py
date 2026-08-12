@@ -68,9 +68,7 @@ async def test_completion_returns_only_provider_metadata_and_content() -> None:
         json={
             "id": "completion-1",
             "model": "served-model",
-            "choices": [
-                {"message": {"role": "assistant", "content": "Try push-ups."}}
-            ],
+            "choices": [{"message": {"role": "assistant", "content": "Try push-ups."}}],
             "usage": {"prompt_tokens": 4, "completion_tokens": 3},
         },
     )
