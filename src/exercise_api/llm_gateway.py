@@ -121,7 +121,10 @@ class LLMGateway:
             try:
                 return await self._generate_once(client, request_messages, output_type)
             except _InvalidStructuredResponse as invalid:
-                logger.warning("Model returned invalid structured output; repairing")
+                logger.warning(
+                    "Model returned invalid structured output; repairing (%s)",
+                    invalid.validation_error,
+                )
                 request_messages.append(
                     json_repair_message(
                         invalid.malformed_output, invalid.validation_error
@@ -130,8 +133,11 @@ class LLMGateway:
 
             try:
                 return await self._generate_once(client, request_messages, output_type)
-            except _InvalidStructuredResponse:
-                logger.warning("Model structured-output repair failed")
+            except _InvalidStructuredResponse as invalid:
+                logger.warning(
+                    "Model structured-output repair failed (%s)",
+                    invalid.validation_error,
+                )
 
         raise LLMInvalidResponseError("Model returned invalid structured output")
 
