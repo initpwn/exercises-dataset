@@ -86,7 +86,7 @@ class LLMGateway:
                         for message in non_system
                     ),
                     "temperature": 0,
-                    "max_tokens": self._settings.max_output_tokens,
+                    "max_output_tokens": self._settings.max_output_tokens,
                     "store": False,
                 }
                 if system:

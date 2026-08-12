@@ -118,7 +118,7 @@ async def test_request_can_use_lm_studio_native_chat_contract() -> None:
         "input": "User: find curls",
         "system_prompt": "Return JSON.",
         "temperature": 0,
-        "max_tokens": 2048,
+        "max_output_tokens": 2048,
         "store": False,
     }
 
