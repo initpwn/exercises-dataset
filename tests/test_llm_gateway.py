@@ -1,9 +1,11 @@
 """Contract tests for the provider-neutral chat-completions gateway."""
 
 import json
+from typing import ClassVar, Self
 
 import httpx
 import pytest
+from pydantic import BaseModel, model_validator
 
 from exercise_api.api_models import ChatMessage, RetrievalPlan
 from exercise_api.llm_gateway import (
@@ -13,6 +15,16 @@ from exercise_api.llm_gateway import (
 )
 from exercise_api.prompts import json_repair_message
 from tests.fakes import SequenceTransport, assistant, llm_settings
+
+
+class CountingResponse(BaseModel):
+    value: str
+    validations: ClassVar[int] = 0
+
+    @model_validator(mode="after")
+    def record_validation(self) -> Self:
+        type(self).validations += 1
+        return self
 
 
 def messages() -> list[ChatMessage]:
@@ -75,6 +87,31 @@ async def test_repairs_malformed_json_once() -> None:
     repair_request = json.loads(transport.requests[1].content)
     assert repair_request["messages"][-1]["role"] == "user"
     assert "not-json" in repair_request["messages"][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_repairs_typed_invalid_json_once() -> None:
+    transport = SequenceTransport(
+        [assistant("{}"), assistant('{"intent":"exercise_search"}')]
+    )
+    gateway = LLMGateway(llm_settings(), transport=transport)
+
+    result = await gateway.generate_json(messages(), RetrievalPlan)
+
+    assert result.intent == "exercise_search"
+    assert transport.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_validates_each_provider_response_once() -> None:
+    CountingResponse.validations = 0
+    transport = SequenceTransport([assistant('{"value":"ok"}')])
+    gateway = LLMGateway(llm_settings(), transport=transport)
+
+    result = await gateway.generate_json(messages(), CountingResponse)
+
+    assert result.value == "ok"
+    assert CountingResponse.validations == 1
 
 
 @pytest.mark.asyncio

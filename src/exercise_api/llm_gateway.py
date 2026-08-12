@@ -22,6 +22,12 @@ class LLMInvalidResponseError(Exception):
     """Raised when the model twice returns invalid structured output."""
 
 
+class _InvalidStructuredResponse(Exception):
+    def __init__(self, malformed_output: str, validation_error: str) -> None:
+        self.malformed_output = malformed_output
+        self.validation_error = validation_error
+
+
 class LLMGateway:
     """Generate validated JSON through the ordinary chat-completions contract."""
 
@@ -42,18 +48,19 @@ class LLMGateway:
             transport=self._transport,
             timeout=self._settings.timeout_seconds,
         ) as client:
-            malformed_output, error = await self._generate_once(
-                client, request_messages, output_type
-            )
-            if error is None:
-                return output_type.model_validate_json(_extract_json(malformed_output))
+            try:
+                return await self._generate_once(client, request_messages, output_type)
+            except _InvalidStructuredResponse as invalid:
+                request_messages.append(
+                    json_repair_message(
+                        invalid.malformed_output, invalid.validation_error
+                    )
+                )
 
-            request_messages.append(json_repair_message(malformed_output, error))
-            repaired_output, repair_error = await self._generate_once(
-                client, request_messages, output_type
-            )
-            if repair_error is None:
-                return output_type.model_validate_json(_extract_json(repaired_output))
+            try:
+                return await self._generate_once(client, request_messages, output_type)
+            except _InvalidStructuredResponse:
+                pass
 
         raise LLMInvalidResponseError("Model returned invalid structured output")
 
@@ -62,7 +69,7 @@ class LLMGateway:
         client: httpx.AsyncClient,
         messages: list[ChatMessage],
         output_type: type[T],
-    ) -> tuple[str, str | None]:
+    ) -> T:
         try:
             response = await client.post(
                 f"{self._settings.base_url.rstrip('/')}/chat/completions",
@@ -82,7 +89,7 @@ class LLMGateway:
             if not isinstance(content, str):
                 raise TypeError("message content must be text")
             decoded = json.loads(_extract_json(content))
-            output_type.model_validate(decoded)
+            return output_type.model_validate(decoded)
         except (
             json.JSONDecodeError,
             ValidationError,
@@ -90,9 +97,9 @@ class LLMGateway:
             IndexError,
             TypeError,
         ) as exc:
-            return _response_text(response), str(exc)
-
-        return content, None
+            raise _InvalidStructuredResponse(
+                _response_text(response), str(exc)
+            ) from None
 
 
 def _extract_json(content: str) -> str:
