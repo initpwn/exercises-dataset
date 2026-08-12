@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -95,7 +96,32 @@ class ExerciseRepository:
             )
         return ExerciseOut.model_validate(row) if row is not None else None
 
-    async def distinct(self, field: DistinctField) -> list[str]:
+    async def matching_exact(
+        self, filters: ExerciseFilters
+    ) -> builtins.list[ExerciseOut]:
+        """Return rows satisfying every normalized constraint exactly."""
+        conditions = []
+        for field in (
+            "category",
+            "body_part",
+            "equipment",
+            "muscle_group",
+            "target",
+        ):
+            value = getattr(filters, field)
+            if value is not None:
+                column = getattr(ExerciseRow, field)
+                conditions.append(func.lower(column) == value.strip().lower())
+
+        async with self._session_factory() as session:
+            rows = (
+                await session.scalars(
+                    select(ExerciseRow).where(*conditions).order_by(ExerciseRow.id)
+                )
+            ).all()
+        return [ExerciseOut.model_validate(row) for row in rows]
+
+    async def distinct(self, field: DistinctField) -> builtins.list[str]:
         columns: dict[DistinctField, InstrumentedAttribute[str]] = {
             "category": ExerciseRow.category,
             "body_part": ExerciseRow.body_part,

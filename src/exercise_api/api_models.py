@@ -40,6 +40,18 @@ class ExercisePage(BaseModel):
     total_pages: int = Field(serialization_alias="totalPages")
 
 
+class RetrievalPlan(BaseModel):
+    """Structured catalog constraints and terms extracted from a user request."""
+
+    intent: str
+    category: str | None = None
+    body_part: str | None = None
+    equipment: str | None = None
+    muscle_group: str | None = None
+    target: str | None = None
+    search_terms: list[str] = Field(default_factory=list)
+
+
 class MessageOut(BaseModel):
     """One ordered user or assistant message in a conversation."""
 
