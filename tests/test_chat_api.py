@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from exercise_api.api_models import ExerciseOut, RetrievalPlan
 from exercise_api.config import DatabaseSettings, RetrievalSettings, Settings
 from exercise_api.database import Database
 from exercise_api.dependencies import (
@@ -15,8 +16,30 @@ from exercise_api.dependencies import (
 from exercise_api.exercise_repository import ExerciseRepository
 from exercise_api.llm_gateway import LLMUnavailableError
 from exercise_api.main import create_app
+from exercise_api.prompts import (
+    grounded_answer_messages,
+    grounding_correction_message,
+    retrieval_plan_messages,
+)
 from exercise_api.session_repository import SessionRepository
+from tests.factories import catalog_record
 from tests.fakes import FakeLLM
+
+
+def test_all_chat_prompt_stages_require_english_response_strings() -> None:
+    plan = RetrievalPlan(intent="exercise_search", search_terms=["press"])
+    candidate = ExerciseOut.model_validate(catalog_record("0001", "Press"))
+    prompts = [
+        retrieval_plan_messages([], "Muéstrame ejercicios"),
+        grounded_answer_messages(plan, "Muéstrame ejercicios", [candidate], 2),
+        [grounding_correction_message(["0001"], 2)],
+    ]
+
+    for messages in prompts:
+        content = " ".join(message.content for message in messages)
+        assert "all generated response strings must be english" in content.lower()
+
+    assert "Muéstrame ejercicios" in prompts[0][-1].content
 
 
 @pytest.fixture
@@ -381,6 +404,58 @@ async def test_injury_text_adds_professional_guidance_warning(
     assert "not medical advice" in warnings
     assert "professional guidance" in warnings
     assert len(fake_llm.messages) == 2
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "I have a heart condition; suggest a chest exercise.",
+        "I have asthma; suggest a chest exercise.",
+        "I have diabetes; suggest a chest exercise.",
+    ],
+)
+@pytest.mark.asyncio
+async def test_named_medical_conditions_add_professional_guidance_warning(
+    chat_client: AsyncClient, fake_llm: FakeLLM, message: str
+) -> None:
+    fake_llm.queue(
+        {"intent": "exercise_search", "body_part": "chest"},
+        {
+            "answer": "Here are catalog exercises.",
+            "selections": [{"id": "0001"}],
+            "assumptions": [],
+            "warnings": [],
+        },
+    )
+
+    response = await chat_client.post("/v1/chat", json={"message": message})
+
+    assert response.status_code == 200
+    warnings = " ".join(response.json()["warnings"]).lower()
+    assert "not medical advice" in warnings
+    assert "professional guidance" in warnings
+
+
+@pytest.mark.asyncio
+async def test_normal_request_does_not_add_medical_warning(
+    chat_client: AsyncClient, fake_llm: FakeLLM
+) -> None:
+    fake_llm.queue(
+        {"intent": "exercise_search", "body_part": "chest"},
+        {
+            "answer": "Here are catalog exercises.",
+            "selections": [{"id": "0001"}],
+            "assumptions": [],
+            "warnings": [],
+        },
+    )
+
+    response = await chat_client.post(
+        "/v1/chat", json={"message": "Suggest a chest exercise."}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["warnings"] == []
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 """Grounded two-stage conversational search and workout orchestration."""
 
+import re
 from typing import Protocol, TypeVar, cast
 from uuid import UUID
 
@@ -42,15 +43,24 @@ class UngroundedLLMResponseError(Exception):
     """Raised when the sole grounding correction still selects unknown IDs."""
 
 
-_MEDICAL_TERMS = (
+_MEDICAL_CONTEXT_TERMS = (
     "pain",
     "injury",
+    "injuries",
     "injured",
     "pregnant",
     "pregnancy",
     "rehab",
     "rehabilitation",
     "medical condition",
+    "health condition",
+    "heart condition",
+    "asthma",
+    "diabetes",
+)
+_MEDICAL_CONTEXT_PATTERN = re.compile(
+    r"\b(?:" + "|".join(re.escape(term) for term in _MEDICAL_CONTEXT_TERMS) + r")\b",
+    flags=re.IGNORECASE,
 )
 _MEDICAL_WARNING = (
     "This is general exercise information, not medical advice; seek qualified "
@@ -223,10 +233,6 @@ class ChatService:
     @staticmethod
     def _safety_warnings(text: str, warnings: list[str]) -> list[str]:
         result = list(warnings)
-        lowered = text.casefold()
-        if (
-            any(term in lowered for term in _MEDICAL_TERMS)
-            and _MEDICAL_WARNING not in result
-        ):
+        if _MEDICAL_CONTEXT_PATTERN.search(text) and _MEDICAL_WARNING not in result:
             result.append(_MEDICAL_WARNING)
         return result

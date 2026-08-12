@@ -9,6 +9,8 @@ from exercise_api.api_models import (
     RetrievalPlan,
 )
 
+_ENGLISH_OUTPUT_REQUIREMENT = "All generated response strings must be English."
+
 
 def retrieval_plan_messages(
     history: list[MessageOut], current_text: str
@@ -22,7 +24,8 @@ def retrieval_plan_messages(
                 "return only JSON matching RetrievalPlan. Extract only constraints "
                 "the user actually stated: category, body_part, equipment, "
                 "muscle_group, target, and concise search_terms. Use conversation "
-                "history to resolve follow-up references."
+                "history to resolve follow-up references. Input text may be in any "
+                f"language. {_ENGLISH_OUTPUT_REQUIREMENT}"
             ),
         )
     ]
@@ -65,6 +68,7 @@ def grounded_answer_messages(
             role="system",
             content=(
                 "Return only JSON matching the requested response structure. "
+                f"{_ENGLISH_OUTPUT_REQUIREMENT} "
                 f"{response_kind} Select one or more and at most {result_limit} IDs "
                 "only from this valid list: "
                 f"{json.dumps(valid_ids)}. Never invent or rewrite catalog facts. "
@@ -91,7 +95,8 @@ def grounding_correction_message(
     return ChatMessage(
         role="user",
         content=(
-            "Correct the response and return the same JSON structure. Select at "
+            f"{_ENGLISH_OUTPUT_REQUIREMENT} Correct the response and return the "
+            "same JSON structure. Select at "
             f"least one and at most {result_limit} exercises, and use IDs only from "
             "this valid candidate list: "
             f"{json.dumps(valid_candidate_ids)}. Return no other IDs."
