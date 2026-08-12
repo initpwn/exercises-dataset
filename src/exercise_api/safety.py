@@ -24,6 +24,9 @@ _MEDICAL_CONTEXT_PATTERN = re.compile(
 )
 _UNSAFE_MEDICAL_CLAIM_PATTERN = re.compile(
     r"(?:"
+    r"\b(?:this|that|the|your|my|our)\s+(?:workout|routine|session|exercise|movement|plan)\s+"
+    r"(?:is|are|remains?)\s+(?:generally\s+)?(?:safe|suitable|appropriate)\b|"
+    r"\byou\s+can\s+safely\s+perform\b|"
     r"\bmedically\s+(?:safe|suitable|appropriate)\b|"
     r"\bsafe\s+(?:for|with|during)\b|"
     r"\bsuitable\s+(?:for|with|during)\b|"
@@ -77,11 +80,21 @@ _RESTRICTIONS_PATTERN = re.compile(
     r"\b(?:restrictions?|limitations?|avoid|cannot|can't|no\s+injur(?:y|ies))\b",
     flags=re.IGNORECASE,
 )
+_REPS_NUMBER_PATTERN = re.compile(r"\d+")
+_MAX_REPS_PER_SET = 100
+_MAX_REST_SECONDS = 600
 
 
 def contains_unsafe_medical_claim(text: str) -> bool:
     """Return whether model-owned text makes a prohibited affirmative claim."""
     return _UNSAFE_MEDICAL_CLAIM_PATTERN.search(text) is not None
+
+
+def _excessive_reps(reps: str) -> bool:
+    return any(
+        int(match.group()) > _MAX_REPS_PER_SET
+        for match in _REPS_NUMBER_PATTERN.finditer(reps)
+    )
 
 
 def has_medical_context(
@@ -153,6 +166,13 @@ def decision_problems(
         ):
             problems.append("Workout duration contradicted the server default")
         if any(selection.sets > 20 for selection in decision.selections):
+            problems.append("Workout prescription exceeded the server limit")
+        if any(
+            _excessive_reps(selection.reps)
+            or selection.rest_seconds == 0
+            or selection.rest_seconds > _MAX_REST_SECONDS
+            for selection in decision.selections
+        ):
             problems.append("Workout prescription exceeded the server limit")
         if (
             plan.training_volume is None

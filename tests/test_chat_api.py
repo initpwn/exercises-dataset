@@ -761,6 +761,50 @@ async def test_hallucinated_preferences_do_not_suppress_defaults_or_extreme_corr
 
 
 @pytest.mark.asyncio
+async def test_extreme_default_reps_and_zero_rest_are_corrected_once(
+    chat_client: AsyncClient, fake_llm: FakeLLM
+) -> None:
+    fake_llm.queue(
+        {"intent": "workout"},
+        {
+            "answer": "Extreme workout.",
+            "name": "Extreme Workout",
+            "estimated_duration_minutes": 35,
+            "selections": [
+                {
+                    "id": "0003",
+                    "sets": 6,
+                    "reps": "1000",
+                    "rest_seconds": 0,
+                }
+            ],
+        },
+        {
+            "answer": "Here is a conservative workout.",
+            "name": "General Workout",
+            "estimated_duration_minutes": 35,
+            "selections": [
+                {
+                    "id": "0003",
+                    "sets": 3,
+                    "reps": "8-12",
+                    "rest_seconds": 90,
+                }
+            ],
+        },
+    )
+
+    response = await chat_client.post("/v1/chat", json={"message": "make me a workout"})
+
+    assert response.status_code == 200
+    exercise = response.json()["workout"]["exercises"][0]
+    assert exercise["sets"] == 3
+    assert exercise["reps"] == "8-12"
+    assert exercise["rest_seconds"] == 90
+    assert len(fake_llm.messages) == 3
+
+
+@pytest.mark.asyncio
 async def test_typed_non_english_medical_context_adds_server_warning(
     chat_client: AsyncClient, fake_llm: FakeLLM
 ) -> None:
@@ -882,6 +926,9 @@ async def test_unsafe_medical_claim_is_corrected_once(
 @pytest.mark.parametrize(
     "unsafe_claim",
     [
+        "This workout is safe.",
+        "You can safely perform this workout.",
+        "This routine is suitable.",
         "This is safe to perform if you have a knee injury.",
         "This is suitable if you have arthritis.",
         "This is recommended for arthritis.",

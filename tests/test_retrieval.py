@@ -76,6 +76,15 @@ async def retrieval(tmp_path: Path) -> AsyncIterator[RetrievalService]:
                     category="strength",
                     equipment="suspension trainer",
                 ),
+                catalog_record(
+                    "0009",
+                    "cardio step up",
+                    category="cardio",
+                    body_part="cardio",
+                    equipment="body weight",
+                    muscle_group="cardio",
+                    target="cardiovascular system",
+                ),
             ],
         ),
     )
@@ -196,6 +205,19 @@ async def test_unrelated_request_fails_deterministic_relevance_floor(
     results = await retrieval.retrieve(
         RetrievalPlan(intent="exercise_search", search_terms=["zyxqv nonsense"]),
         "zyxqv nonsense",
+        candidate_limit=10,
+    )
+
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_short_word_fragment_does_not_pass_fuzzy_relevance_floor(
+    retrieval: RetrievalService,
+) -> None:
+    results = await retrieval.retrieve(
+        RetrievalPlan(intent="exercise_search", search_terms=["car"]),
+        "car",
         candidate_limit=10,
     )
 

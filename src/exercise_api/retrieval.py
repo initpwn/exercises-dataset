@@ -181,7 +181,19 @@ def _relevance(exercise: ExerciseOut, needles: list[str]) -> float:
         exercise.body_part,
         exercise.category,
     ]
-    return _best_match(needles, [_normalize(value) for value in values])
+    normalized_values = [_normalize(value) for value in values]
+    scores: list[float] = []
+    for needle in needles:
+        if len(needle) < 4:
+            value_tokens = {
+                token
+                for value in normalized_values
+                for token in re.findall(r"\w+", value)
+            }
+            scores.append(100.0 if needle in value_tokens else 0.0)
+        else:
+            scores.append(_best_match([needle], normalized_values))
+    return max(scores, default=0.0)
 
 
 class RetrievalService:
