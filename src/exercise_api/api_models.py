@@ -1,10 +1,10 @@
-"""Public response models for exercise catalog endpoints."""
+"""Typed API and provider-neutral structured response models."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ChatMessage(BaseModel):
@@ -50,13 +50,111 @@ class ExercisePage(BaseModel):
 class RetrievalPlan(BaseModel):
     """Structured catalog constraints and terms extracted from a user request."""
 
-    intent: str
+    model_config = ConfigDict(extra="forbid")
+
+    intent: Literal["exercise_search", "workout"]
     category: str | None = None
     body_part: str | None = None
     equipment: str | None = None
     muscle_group: str | None = None
     target: str | None = None
     search_terms: list[str] = Field(default_factory=list)
+
+
+class ChatRequest(BaseModel):
+    """One conversational request, optionally continuing a durable session."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: UUID | None = None
+    message: str
+
+    @field_validator("message")
+    @classmethod
+    def message_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("message must not be blank")
+        return value.strip()
+
+
+class ExerciseSelection(BaseModel):
+    """A model-selected catalog ID for an exercise-search response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+
+
+class WorkoutSelection(BaseModel):
+    """LLM-owned prescription attached to one selected catalog exercise."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    sets: Annotated[int, Field(ge=1)]
+    reps: Annotated[str, Field(min_length=1)]
+    rest_seconds: Annotated[int, Field(ge=0)]
+    notes: str | None = None
+
+
+class ExerciseSearchDecision(BaseModel):
+    """Validated structured output for grounded catalog search."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    intent: Literal["exercise_search"] = "exercise_search"
+    answer: str
+    selections: list[ExerciseSelection]
+    assumptions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class WorkoutDecision(BaseModel):
+    """Validated structured output for grounded workout generation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    intent: Literal["workout"] = "workout"
+    answer: str
+    name: str
+    estimated_duration_minutes: Annotated[int, Field(ge=1)]
+    selections: list[WorkoutSelection]
+    assumptions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+GroundedDecision = Annotated[
+    ExerciseSearchDecision | WorkoutDecision, Field(discriminator="intent")
+]
+
+
+class WorkoutExercise(ExerciseOut):
+    """A catalog-owned exercise plus model-owned workout prescription."""
+
+    sets: Annotated[int, Field(ge=1)]
+    reps: Annotated[str, Field(min_length=1)]
+    rest_seconds: Annotated[int, Field(ge=0)]
+    notes: str | None = None
+
+
+class WorkoutOut(BaseModel):
+    """Client-renderable workout assembled from validated selections."""
+
+    name: str
+    estimated_duration_minutes: Annotated[int, Field(ge=1)]
+    exercises: list[WorkoutExercise]
+
+
+class ChatResponse(BaseModel):
+    """Grounded conversational response safe for direct client rendering."""
+
+    session_id: UUID
+    answer: str
+    intent: Literal["exercise_search", "workout"]
+    assumptions: list[str] = Field(default_factory=list)
+    workout: WorkoutOut | None = None
+    results: list[ExerciseOut] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class MessageOut(BaseModel):
