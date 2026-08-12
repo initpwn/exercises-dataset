@@ -1,5 +1,6 @@
 """Persistence and HTTP contract tests for conversation sessions."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from uuid import uuid4
@@ -81,6 +82,36 @@ async def test_recent_messages_returns_newest_limit_chronologically(
     ]
     assert await repository.delete(session.id)
     assert await repository.recent_messages(session.id, 10) == []
+    await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_appends_reserve_unique_ordered_positions(
+    tmp_path: Path,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'concurrent.db'}")
+    await database.create_schema()
+    repository = SessionRepository(database.session_factory)
+    session = await repository.create()
+
+    await asyncio.gather(
+        repository.append_exchange(session.id, "user 1", "assistant 1", None),
+        repository.append_exchange(session.id, "user 2", "assistant 2", None),
+    )
+
+    loaded = await repository.get(session.id)
+    assert loaded is not None
+    assert [message.position for message in loaded.messages] == [0, 1, 2, 3]
+    assert [message.role for message in loaded.messages] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert [message.text for message in loaded.messages] in (
+        ["user 1", "assistant 1", "user 2", "assistant 2"],
+        ["user 2", "assistant 2", "user 1", "assistant 1"],
+    )
     await database.dispose()
 
 

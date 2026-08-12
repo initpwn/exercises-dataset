@@ -52,6 +52,7 @@ class SessionRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
+    next_position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     messages: Mapped[list["MessageRow"]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",

@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
@@ -69,17 +69,15 @@ class SessionRepository:
             self._session_factory() as database_session,
             database_session.begin(),
         ):
-            exists = await database_session.scalar(
-                select(SessionRow.id).where(SessionRow.id == session_key)
+            reserved_end = await database_session.scalar(
+                update(SessionRow)
+                .where(SessionRow.id == session_key)
+                .values(next_position=SessionRow.next_position + 2)
+                .returning(SessionRow.next_position)
             )
-            if exists is None:
+            if reserved_end is None:
                 raise SessionNotFoundError(session_key)
-            last_position = await database_session.scalar(
-                select(func.max(MessageRow.position)).where(
-                    MessageRow.session_id == session_key
-                )
-            )
-            first_position = 0 if last_position is None else last_position + 1
+            first_position = reserved_end - 2
             database_session.add_all(
                 [
                     MessageRow(
