@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from exercise_api.api_models import ChatMessage
 from exercise_api.config import DatabaseSettings, Settings
+from exercise_api.database import Database
 from exercise_api.llm_gateway import LLMUnavailableError
 from exercise_api.main import create_app
 
@@ -18,23 +19,31 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class UnavailableLLM:
+    def __init__(self) -> None:
+        self.calls = 0
+
     async def generate_json(
         self, messages: list[ChatMessage], output_type: type[T]
     ) -> T:
+        self.calls += 1
         raise LLMUnavailableError("provider detail must not escape")
 
 
 async def _started_client(
-    tmp_path: Path, catalog_path: Path, *, unavailable_llm: bool = False
+    tmp_path: Path,
+    catalog_path: Path,
+    *,
+    unavailable_llm: UnavailableLLM | None = None,
 ) -> AsyncIterator[AsyncClient]:
     settings = Settings(
         database=DatabaseSettings(url=f"sqlite:///{tmp_path / 'readiness.db'}")
     )
-    app = create_app(settings)
-    app.state.catalog_path = catalog_path
-    app.state.schema_path = Path("data/exercises.schema.json")
-    if unavailable_llm:
-        app.state.llm_gateway = UnavailableLLM()
+    app = create_app(
+        settings,
+        catalog_path=catalog_path,
+        schema_path=Path("data/exercises.schema.json"),
+        llm_gateway=unavailable_llm,
+    )
 
     async with (
         app.router.lifespan_context(app),
@@ -61,9 +70,18 @@ async def degraded_client(tmp_path: Path) -> AsyncIterator[AsyncClient]:
 
 
 @pytest.fixture
-async def ready_client(tmp_path: Path) -> AsyncIterator[AsyncClient]:
+def unavailable_llm() -> UnavailableLLM:
+    return UnavailableLLM()
+
+
+@pytest.fixture
+async def ready_client(
+    tmp_path: Path, unavailable_llm: UnavailableLLM
+) -> AsyncIterator[AsyncClient]:
     async for client in _started_client(
-        tmp_path, Path("tests/fixtures/catalog.json"), unavailable_llm=True
+        tmp_path,
+        Path("tests/fixtures/catalog.json"),
+        unavailable_llm=unavailable_llm,
     ):
         yield client
 
@@ -84,13 +102,14 @@ async def test_invalid_catalog_exposes_degraded_health_only(
 
 @pytest.mark.asyncio
 async def test_llm_outage_does_not_break_direct_catalog(
-    ready_client: AsyncClient,
+    ready_client: AsyncClient, unavailable_llm: UnavailableLLM
 ) -> None:
     assert (await ready_client.get("/exercises")).status_code == 200
     assert (
         await ready_client.post("/v1/chat", json={"message": "find curls"})
     ).status_code == 503
     assert (await ready_client.get("/health")).status_code == 200
+    assert unavailable_llm.calls == 1
 
 
 def test_module_exports_deferred_startup_app() -> None:
@@ -138,3 +157,47 @@ async def test_disabled_lifespan_defaults_to_degraded() -> None:
 
     assert health.status_code == 503
     assert direct.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_injected_database_does_not_imply_readiness(tmp_path: Path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'fresh.db'}")
+    await database.create_schema()
+    settings = Settings(database=DatabaseSettings(url="sqlite:///unused.db"))
+    disabled_app = create_app(
+        settings,
+        lifespan_enabled=False,
+        initialized_database=database,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=disabled_app), base_url="http://test"
+    ) as client:
+        health = await client.get("/health")
+
+    assert health.status_code == 503
+    await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_explicit_ready_injection_enables_initialized_test_app(
+    tmp_path: Path,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'explicit-ready.db'}")
+    await database.create_schema()
+    settings = Settings(database=DatabaseSettings(url="sqlite:///unused.db"))
+    ready_app = create_app(
+        settings,
+        lifespan_enabled=False,
+        initialized_database=database,
+        initial_readiness={"database": "ready", "catalog": "ready"},
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=ready_app), base_url="http://test"
+    ) as client:
+        health = await client.get("/health")
+        direct = await client.get("/exercises")
+
+    assert health.status_code == 200
+    assert direct.status_code == 200
+    await database.dispose()

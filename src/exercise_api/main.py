@@ -1,6 +1,6 @@
 """FastAPI application factory."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from exercise_api.catalog import load_catalog, sync_catalog
+from exercise_api.chat_service import StructuredLLM
 from exercise_api.config import Settings, load_settings
 from exercise_api.database import Database
 from exercise_api.dependencies import require_ready
@@ -27,6 +28,8 @@ def create_app(
     lifespan_enabled: bool = True,
     *,
     initialized_database: Database | None = None,
+    initial_readiness: Mapping[str, str] | None = None,
+    llm_gateway: StructuredLLM | None = None,
     settings_path: Path = Path("config.toml"),
     catalog_path: Path = Path("data/exercises.json"),
     schema_path: Path = Path("data/exercises.schema.json"),
@@ -45,7 +48,8 @@ def create_app(
                     database = Database(resolved_settings.database.url)
                 app.state.settings = resolved_settings
                 app.state.database = database
-                app.state.llm_gateway = LLMGateway(resolved_settings.llm)
+                if app.state.llm_gateway is None:
+                    app.state.llm_gateway = LLMGateway(resolved_settings.llm)
                 await database.create_schema()
             except Exception:  # noqa: BLE001 - health must survive startup failures.
                 app.state.readiness.update(database="failed", catalog="failed")
@@ -68,19 +72,21 @@ def create_app(
     app = FastAPI(lifespan=lifespan if lifespan_enabled else None)
     app.state.database = initialized_database
     app.state.settings = settings
-    app.state.llm_gateway = LLMGateway(settings.llm) if settings is not None else None
+    app.state.llm_gateway = llm_gateway
     app.state.settings_path = settings_path
     app.state.catalog_path = catalog_path
     app.state.schema_path = schema_path
-    initialized = (
-        not lifespan_enabled
-        and settings is not None
-        and initialized_database is not None
-    )
-    initial_state = "ready" if initialized else "pending"
     app.state.readiness = {
-        "database": initial_state,
-        "catalog": initial_state,
+        "database": (
+            initial_readiness.get("database", "pending")
+            if initial_readiness is not None
+            else "pending"
+        ),
+        "catalog": (
+            initial_readiness.get("catalog", "pending")
+            if initial_readiness is not None
+            else "pending"
+        ),
     }
 
     @app.exception_handler(LLMUnavailableError)

@@ -5,6 +5,7 @@ from typing import Annotated, cast
 from fastapi import Depends, HTTPException, Request, status
 
 from exercise_api.chat_service import ChatService, StructuredLLM
+from exercise_api.config import Settings
 from exercise_api.database import Database
 from exercise_api.exercise_repository import ExerciseRepository
 from exercise_api.retrieval import RetrievalService
@@ -48,10 +49,17 @@ def get_chat_service(
     sessions: Annotated[SessionRepository, Depends(get_session_repository)],
 ) -> ChatService:
     """Build the conversational orchestrator from application dependencies."""
+    llm_gateway = getattr(request.app.state, "llm_gateway", None)
+    settings = getattr(request.app.state, "settings", None)
+    if llm_gateway is None or not isinstance(settings, Settings):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Application is not ready",
+        )
     return ChatService(
         sessions=sessions,
         retrieval=RetrievalService(exercises),
         exercises=exercises,
-        llm=cast(StructuredLLM, request.app.state.llm_gateway),
-        settings=request.app.state.settings,
+        llm=cast(StructuredLLM, llm_gateway),
+        settings=settings,
     )

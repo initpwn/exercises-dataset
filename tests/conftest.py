@@ -43,7 +43,12 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
 @pytest.fixture
 async def client(database: Database) -> AsyncIterator[AsyncClient]:
     settings = Settings(database=DatabaseSettings(url="sqlite:///unused.db"))
-    app = create_app(settings, lifespan_enabled=False, initialized_database=database)
+    app = create_app(
+        settings,
+        lifespan_enabled=False,
+        initialized_database=database,
+        initial_readiness={"database": "ready", "catalog": "ready"},
+    )
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as api_client:

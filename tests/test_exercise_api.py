@@ -146,7 +146,12 @@ async def test_random_empty_catalog_is_404(tmp_path: Path) -> None:
     database = Database(f"sqlite+aiosqlite:///{tmp_path / 'empty.db'}")
     await database.create_schema()
     settings = Settings(database=DatabaseSettings(url="sqlite:///unused.db"))
-    app = create_app(settings, lifespan_enabled=False, initialized_database=database)
+    app = create_app(
+        settings,
+        lifespan_enabled=False,
+        initialized_database=database,
+        initial_readiness={"database": "ready", "catalog": "ready"},
+    )
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as empty_client:

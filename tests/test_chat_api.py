@@ -49,8 +49,13 @@ async def chat_client(
         database=DatabaseSettings(url="sqlite:///unused.db"),
         retrieval=RetrievalSettings(candidate_limit=30, result_limit=2),
     )
-    app = create_app(settings, lifespan_enabled=False, initialized_database=database)
-    app.state.llm_gateway = fake_llm
+    app = create_app(
+        settings,
+        lifespan_enabled=False,
+        initialized_database=database,
+        initial_readiness={"database": "ready", "catalog": "ready"},
+        llm_gateway=fake_llm,
+    )
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:

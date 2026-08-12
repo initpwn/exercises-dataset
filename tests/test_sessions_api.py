@@ -23,6 +23,7 @@ async def client(tmp_path: Path) -> AsyncIterator[AsyncClient]:
         Settings(database=DatabaseSettings(url="sqlite:///unused.db")),
         lifespan_enabled=False,
         initialized_database=database,
+        initial_readiness={"database": "ready", "catalog": "ready"},
     )
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
