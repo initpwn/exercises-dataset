@@ -1,0 +1,71 @@
+import hashlib
+from pathlib import Path
+
+import pytest
+from sqlalchemy import select
+
+from exercise_api.catalog import (
+    CatalogValidationError,
+    LoadedCatalog,
+    load_catalog,
+    sync_catalog,
+)
+from exercise_api.database import Database, async_database_url
+from exercise_api.db_models import ExerciseRow
+from tests.factories import catalog_record
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("sqlite:///catalog.db", "sqlite+aiosqlite:///catalog.db"),
+        ("sqlite+aiosqlite:///catalog.db", "sqlite+aiosqlite:///catalog.db"),
+        (
+            "postgresql+psycopg2://user:pass@host/db",
+            "postgresql+psycopg://user:pass@host/db",
+        ),
+        ("postgresql://user:pass@host/db", "postgresql+psycopg://user:pass@host/db"),
+    ],
+)
+def test_async_database_url_normalizes_approved_urls(url: str, expected: str) -> None:
+    assert async_database_url(url) == expected
+
+
+def test_load_catalog_validates_hashes_and_projects_english_steps() -> None:
+    path = Path("tests/fixtures/catalog.json")
+
+    loaded = load_catalog(path, Path("data/exercises.schema.json"))
+
+    assert loaded.content_hash == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert len(loaded.records) == 1
+    assert loaded.records[0].instructions == ["First step", "Second step"]
+
+
+def test_load_catalog_rejects_schema_violation(tmp_path: Path) -> None:
+    path = tmp_path / "bad.json"
+    path.write_text('[{"id":"not-four-digits"}]', encoding="utf-8")
+    with pytest.raises(CatalogValidationError):
+        load_catalog(path, Path("data/exercises.schema.json"))
+
+
+@pytest.mark.asyncio
+async def test_sync_inserts_updates_and_deletes_records(tmp_path: Path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+    await database.create_schema()
+    first = LoadedCatalog(
+        "hash-1", [catalog_record("0001", "Curl"), catalog_record("0002", "Squat")]
+    )
+    assert await sync_catalog(database.session_factory, first) is True
+    changed = LoadedCatalog(
+        "hash-2",
+        [catalog_record("0001", "Strict curl"), catalog_record("0003", "Row")],
+    )
+    assert await sync_catalog(database.session_factory, changed) is True
+    async with database.session_factory() as session:
+        rows = (await session.scalars(select(ExerciseRow).order_by(ExerciseRow.id))).all()
+    assert [(row.id, row.name) for row in rows] == [
+        ("0001", "Strict curl"),
+        ("0003", "Row"),
+    ]
+    assert await sync_catalog(database.session_factory, changed) is False
+    await database.dispose()

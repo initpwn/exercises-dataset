@@ -1,0 +1,33 @@
+[
+  {
+    "id": "0001",
+    "name": "Curl",
+    "category": "chest",
+    "body_part": "chest",
+    "equipment": "dumbbell",
+    "instructions": {
+      "en": "First step. Second step.",
+      "es": "Primer paso. Segundo paso.",
+      "it": "Primo passo. Secondo passo.",
+      "tr": "Birinci adım. İkinci adım.",
+      "ru": "Первый шаг. Второй шаг.",
+      "zh": "第一步。第二步。"
+    },
+    "instruction_steps": {
+      "en": ["First step", "Second step"],
+      "es": ["Primer paso", "Segundo paso"],
+      "it": ["Primo passo", "Secondo passo"],
+      "tr": ["Birinci adım", "İkinci adım"],
+      "ru": ["Первый шаг", "Второй шаг"],
+      "zh": ["第一步", "第二步"]
+    },
+    "muscle_group": "triceps",
+    "secondary_muscles": ["triceps"],
+    "target": "pectorals",
+    "media_id": "media-0001",
+    "image": "images/0001-media-0001.jpg",
+    "gif_url": "videos/0001-media-0001.gif",
+    "attribution": "© Gym visual — https://gymvisual.com/",
+    "created_at": "2024-01-01T00:00:00+00:00"
+  }
+]
