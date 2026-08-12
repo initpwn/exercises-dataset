@@ -17,6 +17,8 @@ from jsonschema import (  # type: ignore[import-untyped]
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from exercise_api.db_models import CatalogStateRow, ExerciseRow
@@ -87,18 +89,43 @@ def load_catalog(data_path: Path, schema_path: Path) -> LoadedCatalog:
     return LoadedCatalog(hashlib.sha256(raw_bytes).hexdigest(), records)
 
 
+async def _initialize_catalog_state(session: AsyncSession) -> None:
+    values = {"key": CATALOG_STATE_KEY, "content_hash": ""}
+    dialect_name = session.get_bind().dialect.name
+    if dialect_name == "postgresql":
+        postgresql_statement = (
+            postgresql_insert(CatalogStateRow)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=[CatalogStateRow.key])
+        )
+        await session.execute(postgresql_statement)
+        return
+    if dialect_name == "sqlite":
+        sqlite_statement = (
+            sqlite_insert(CatalogStateRow)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=[CatalogStateRow.key])
+        )
+        await session.execute(sqlite_statement)
+        return
+    raise RuntimeError(f"unsupported catalog database dialect: {dialect_name}")
+
+
 async def sync_catalog(
     session_factory: async_sessionmaker[AsyncSession], catalog: LoadedCatalog
 ) -> bool:
     """Synchronize all catalog rows atomically, returning whether data changed."""
     async with session_factory() as session:
         try:
+            await _initialize_catalog_state(session)
             state = await session.scalar(
                 select(CatalogStateRow)
                 .where(CatalogStateRow.key == CATALOG_STATE_KEY)
                 .with_for_update()
             )
-            if state is not None and state.content_hash == catalog.content_hash:
+            if state is None:
+                raise RuntimeError("catalog state initialization did not create a row")
+            if state.content_hash == catalog.content_hash:
                 return False
 
             existing = {
@@ -118,12 +145,7 @@ async def sync_catalog(
             for stale_id in existing.keys() - current_ids:
                 await session.delete(existing[stale_id])
 
-            if state is None:
-                session.add(
-                    CatalogStateRow(key=CATALOG_STATE_KEY, content_hash=catalog.content_hash)
-                )
-            else:
-                state.content_hash = catalog.content_hash
+            state.content_hash = catalog.content_hash
 
             await session.commit()
         except Exception:

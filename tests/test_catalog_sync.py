@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 from pathlib import Path
 
@@ -68,4 +69,26 @@ async def test_sync_inserts_updates_and_deletes_records(tmp_path: Path) -> None:
         ("0003", "Row"),
     ]
     assert await sync_catalog(database.session_factory, changed) is False
+    await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_initial_sync_serializes_on_catalog_state(tmp_path: Path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'concurrent.db'}")
+    await database.create_schema()
+    catalog = LoadedCatalog(
+        "shared-hash",
+        [catalog_record(f"{index:04d}", f"Exercise {index}") for index in range(100)],
+    )
+
+    results = await asyncio.gather(
+        sync_catalog(database.session_factory, catalog),
+        sync_catalog(database.session_factory, catalog),
+        return_exceptions=True,
+    )
+
+    assert sorted(results, key=str) == [False, True]
+    async with database.session_factory() as session:
+        rows = (await session.scalars(select(ExerciseRow))).all()
+    assert len(rows) == 100
     await database.dispose()
